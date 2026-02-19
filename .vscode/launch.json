@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:sqlitizer}",
+            "name": "Debug SQLitizer",
+            "target": "SQLitizer",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug SQLitizer"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:sqlitizer}",
+            "name": "Release SQLitizer",
+            "target": "SQLitizer",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release SQLitizer"
+        }
+    ]
+}
