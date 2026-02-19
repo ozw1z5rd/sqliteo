@@ -195,26 +195,68 @@ struct DataTableView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 GeometryReader { geometry in
-                    ScrollView([.horizontal, .vertical]) {
-                        LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders])
-                        {
-                            Section(header: HeaderView(columns: dbManager.columns)) {
-                                ForEach(dbManager.rows) { row in
-                                    RowView(row: row, columns: dbManager.columns)
+                    ZStack(alignment: .bottom) {
+                        ScrollView([.horizontal, .vertical]) {
+                            LazyVStack(
+                                alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]
+                            ) {
+                                Section(header: HeaderView(columns: dbManager.columns)) {
+                                    ForEach(dbManager.rows) { row in
+                                        RowView(row: row, columns: dbManager.columns)
+                                    }
                                 }
                             }
+                            // Add extra padding at the bottom so content isn't covered by the edit bar
+                            .padding(.bottom, !dbManager.activeEdits.isEmpty ? 60 : 0)
+                            .frame(
+                                minWidth: max(
+                                    geometry.size.width, CGFloat(dbManager.columns.count) * 150),
+                                minHeight: geometry.size.height,
+                                alignment: .topLeading
+                            )
                         }
-                        .frame(
-                            minWidth: max(
-                                geometry.size.width, CGFloat(dbManager.columns.count) * 150),
-                            minHeight: geometry.size.height,
-                            alignment: .topLeading
-                        )
+
+                        if !dbManager.activeEdits.isEmpty {
+                            EditControlBar()
+                                .transition(.move(edge: .bottom))
+                        }
                     }
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+struct EditControlBar: View {
+    @Environment(DatabaseManager.self) private var dbManager
+
+    var body: some View {
+        HStack {
+            Text("Editing \(dbManager.activeEdits.count) cell(s)...")
+                .font(.headline)
+                .foregroundColor(.secondary)
+
+            Spacer()
+
+            Button {
+                dbManager.cancelEdits()
+            } label: {
+                Text("Cancel")
+            }
+            .keyboardShortcut(.escape, modifiers: [])
+
+            Button {
+                dbManager.applyEdits()
+            } label: {
+                Text("Apply")
+            }
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut(.return, modifiers: [])
+        }
+        .padding()
+        .background(.ultraThinMaterial)
+        .overlay(Divider(), alignment: .top)
     }
 }
 
@@ -258,37 +300,56 @@ struct CellView: View {
     let column: String
     let initialValue: String
 
-    @State private var text: String
-
-    init(rowID: UUID, column: String, initialValue: String) {
-        self.rowID = rowID
-        self.column = column
-        self.initialValue = initialValue
-        _text = State(initialValue: initialValue)
-    }
-
     var body: some View {
-        TextField("", text: $text)
-            .textFieldStyle(.plain)
-            .padding(8)
-            .frame(width: 150, alignment: .leading)
-            .background(isEdited ? Color.blue.opacity(0.1) : Color.clear)
-            .border(Color.secondary.opacity(0.1))
-            .onChange(of: text) { _, newValue in
-                if newValue != initialValue {
-                    dbManager.updateCell(rowID: rowID, column: column, value: newValue)
+        ZStack(alignment: .leading) {
+            if isEditing {
+                TextField(
+                    "",
+                    text: Binding(
+                        get: { dbManager.activeEdits[CellID(rowID: rowID, column: column)] ?? "" },
+                        set: { dbManager.updateActiveEdit(rowID: rowID, column: column, value: $0) }
+                    )
+                )
+                .textFieldStyle(.plain)
+                .padding(8)
+                .frame(width: 150, alignment: .leading)
+                .background(Color.blue.opacity(0.1))
+                .onSubmit {
+                    // dbManager.applyEdits() // Don't apply on enter, let them edit multiple
                 }
+            } else {
+                Text(displayValue)
+                    .lineLimit(1)
+                    .padding(8)
+                    .frame(width: 150, alignment: .leading)
+                    .background(hasPendingChanges ? Color.yellow.opacity(0.1) : Color.clear)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        dbManager.startEditing(
+                            rowID: rowID, column: column, currentValue: displayValue)
+                    }
             }
-            .onChange(of: dbManager.pendingChanges) { _, _ in
-                // If changes were discarded or saved (pendingChanges cleared), reset text to current db value if it's not in pending
-                if dbManager.pendingChanges[rowID]?[column] == nil {
-                    text = initialValue
-                }
-            }
+        }
+        .border(Color.secondary.opacity(0.1))
     }
 
-    var isEdited: Bool {
+    var isEditing: Bool {
+        dbManager.activeEdits[CellID(rowID: rowID, column: column)] != nil
+    }
+
+    private func CellID(rowID: UUID, column: String) -> DatabaseManager.CellID {
+        DatabaseManager.CellID(rowID: rowID, column: column)
+    }
+
+    var hasPendingChanges: Bool {
         dbManager.pendingChanges[rowID]?[column] != nil
+    }
+
+    var displayValue: String {
+        if let pending = dbManager.pendingChanges[rowID]?[column] {
+            return pending
+        }
+        return initialValue
     }
 }
 

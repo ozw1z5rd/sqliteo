@@ -35,6 +35,38 @@ class DatabaseManager {
     var currentFileURL: URL?
     var currentFileSize: String?
 
+    struct CellID: Hashable {
+        let rowID: UUID
+        let column: String
+    }
+
+    var activeEdits: [CellID: String] = [:]
+
+    func startEditing(rowID: UUID, column: String, currentValue: String) {
+        let cellID = CellID(rowID: rowID, column: column)
+        if activeEdits[cellID] == nil {
+            activeEdits[cellID] = currentValue
+        }
+    }
+
+    func updateActiveEdit(rowID: UUID, column: String, value: String) {
+        let cellID = CellID(rowID: rowID, column: column)
+        if activeEdits[cellID] != nil {
+            activeEdits[cellID] = value
+        }
+    }
+
+    func applyEdits() {
+        for (cell, value) in activeEdits {
+            updateCell(rowID: cell.rowID, column: cell.column, value: value)
+        }
+        activeEdits.removeAll()
+    }
+
+    func cancelEdits() {
+        activeEdits.removeAll()
+    }
+
     func connect(to url: URL) async {
         do {
             self.currentFileURL = url
