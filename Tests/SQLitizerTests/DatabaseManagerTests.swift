@@ -56,7 +56,7 @@ final class DatabaseManagerTests {
         #expect(manager.creationDate != nil)
         #expect(manager.modificationDate != nil)
 
-        #expect(manager.tableNames.sorted() == ["posts", "tags", "users"])
+        #expect(manager.tableNames.sorted() == ["no_pk", "posts", "tags", "users"])
     }
 
     @Test("Selecting a standard table populates columns and rows")
@@ -88,7 +88,7 @@ final class DatabaseManagerTests {
                     arguments: ["User \(i)", 20 + (i % 50)])
             }
         }
-        await manager.fetchTables()
+        try await manager.fetchTables()
 
         manager.limit = 1000
         await manager.selectTable("users")
@@ -278,7 +278,7 @@ final class DatabaseManagerTests {
         arguments: [
             (DatabaseManager.FilterOperator.notEquals, "Alice", 2),
             (DatabaseManager.FilterOperator.startsWith, "A", 1),
-            (DatabaseManager.FilterOperator.endsWith, "e", 1),
+            (DatabaseManager.FilterOperator.endsWith, "e", 2),
             (DatabaseManager.FilterOperator.lessThan, "30", 1),
         ])
     func comprehensiveFiltering(

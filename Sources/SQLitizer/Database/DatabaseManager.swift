@@ -79,6 +79,10 @@ class DatabaseManager {
 
     var activeEdits: [CellID: String] = [:]
 
+    var hasChanges: Bool {
+        !pendingChanges.isEmpty
+    }
+
     func startEditing(rowID: TableRowID, column: String, currentValue: String) {
         let cellID = CellID(rowID: rowID, column: column)
         if activeEdits[cellID] == nil {
@@ -171,7 +175,6 @@ class DatabaseManager {
         self.rows = []
         self.totalRows = 0
         self.offset = 0
-        self.pendingChanges = [[:] as TableRowID: [:]]  // Wait, cleanup properly
         self.pendingChanges = [:]
         self.filters = []
         self.tableDDL = ""
@@ -227,6 +230,12 @@ class DatabaseManager {
     func fetchRows(for tableName: String) async throws {
         guard let dbQueue = dbQueue else { return }
 
+        let filtersSnapshot = self.filters
+        let limitSnapshot = self.limit
+        let offsetSnapshot = self.offset
+        let columnsSnapshot = self.columns
+        let pksSnapshot = self.primaryKeyColumns
+
         let (total, fetchedRows) = try await dbQueue.read { db -> (Int, [DBRow]) in
             // 1. Get Total Count
             var countSql = "SELECT COUNT(*) FROM \(tableName)"
@@ -235,7 +244,7 @@ class DatabaseManager {
             var whereClauses: [String] = []
             var whereArgs: [DatabaseValueConvertible] = []
 
-            for filter in self.filters {
+            for filter in filtersSnapshot {
                 let sqlOp = filter.operatorType.sqlOperator
                 whereClauses.append("\(filter.column) \(sqlOp) ?")
 
@@ -274,12 +283,12 @@ class DatabaseManager {
                 sql += " WHERE \(whereString)"
             }
 
-            sql += " LIMIT \(self.limit) OFFSET \(self.offset)"
+            sql += " LIMIT \(limitSnapshot) OFFSET \(offsetSnapshot)"
 
             let rows = try Row.fetchAll(db, sql: sql, arguments: arguments)
             let dbRows = rows.map { row in
                 var dict: [String: String] = [:]
-                for column in self.columns {
+                for column in columnsSnapshot {
                     if let val = row[column] {
                         dict[column] = "\(val)"
                     }
@@ -288,10 +297,10 @@ class DatabaseManager {
                 let id: TableRowID
                 if hasRowId, let rowid = row["rowid"] as? Int64 {
                     id = .rowid(rowid)
-                } else if !self.primaryKeyColumns.isEmpty {
+                } else if !pksSnapshot.isEmpty {
                     var pkDict: [String: String] = [:]
                     var missingPK = false
-                    for pkCol in self.primaryKeyColumns {
+                    for pkCol in pksSnapshot {
                         if let val = row[pkCol] {
                             pkDict[pkCol] = "\(val)"
                         } else {
@@ -410,6 +419,8 @@ class DatabaseManager {
 
         let changesToSave = self.pendingChanges
         let rowsSnapshot = self.rows
+        let columnsSnapshot = self.columns
+        let pksSnapshot = self.primaryKeyColumns
 
         self.isLoading = true
         defer { self.isLoading = false }
@@ -433,7 +444,7 @@ class DatabaseManager {
                         whereArgs = Array(pkDict.values)
                     case .uuid:
                         let whereColumns =
-                            self.primaryKeyColumns.isEmpty ? self.columns : self.primaryKeyColumns
+                            pksSnapshot.isEmpty ? columnsSnapshot : pksSnapshot
                         whereClause = whereColumns.map { "\($0) = ?" }.joined(separator: " AND ")
                         whereArgs = whereColumns.map { row.data[$0] }
                     }
