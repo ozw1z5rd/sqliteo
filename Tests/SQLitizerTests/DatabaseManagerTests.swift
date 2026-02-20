@@ -97,23 +97,17 @@ final class DatabaseManagerTests {
         #expect(manager.rows.count == 1000)
         #expect(manager.totalRows == 2503)
 
-        manager.nextPage()
-        // nextPage uses Task {}, so we might need a small delay or better wait for it.
-        // For tests, it's better if these were async. In DatabaseManager, they are Task {}.
-        // I'll wait a bit.
-        try? await Task.sleep(nanoseconds: 100_000_000)
+        await manager.nextPage()
 
         #expect(manager.offset == 1000)
         #expect(manager.rows.count == 1000)
 
-        manager.nextPage()
-        try? await Task.sleep(nanoseconds: 100_000_000)
+        await manager.nextPage()
 
         #expect(manager.offset == 2000)
         #expect(manager.rows.count == 503)
 
-        manager.previousPage()
-        try? await Task.sleep(nanoseconds: 100_000_000)
+        await manager.previousPage()
 
         #expect(manager.offset == 1000)
         #expect(manager.rows.count == 1000)
@@ -233,7 +227,7 @@ final class DatabaseManagerTests {
         #expect(manager.activeEdits.count == 1)
 
         manager.startEditing(rowID: rowId, column: "name", currentValue: "Different")
-        #expect(manager.activeEdits.values.first == "Alice")
+        #expect(manager.activeEdits[rowId]?["name"] == "Alice")
 
         manager.updateActiveEdit(rowID: rowId, column: "name", value: "Alicia")
         manager.applyEdits()
@@ -249,20 +243,16 @@ final class DatabaseManagerTests {
 
         #expect(manager.offset == 0)
 
-        manager.nextPage()
-        try? await Task.sleep(nanoseconds: 100_000_000)
+        await manager.nextPage()
         #expect(manager.offset == 2)
 
-        manager.nextPage()
-        try? await Task.sleep(nanoseconds: 100_000_000)
+        await manager.nextPage()
         #expect(manager.offset == 2)
 
-        manager.previousPage()
-        try? await Task.sleep(nanoseconds: 100_000_000)
+        await manager.previousPage()
         #expect(manager.offset == 0)
 
-        manager.previousPage()
-        try? await Task.sleep(nanoseconds: 100_000_000)
+        await manager.previousPage()
         #expect(manager.offset == 0)
     }
 

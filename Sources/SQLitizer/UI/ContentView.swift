@@ -17,6 +17,7 @@ struct ContentView: View {
     @State private var suggestions: [String] = []
     @State private var showSuggestions = false
     @State private var currentWord = ""
+    @State private var debounceTask: Task<Void, Never>?
 
     private let sqlKeywords = [
         "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET",
@@ -74,7 +75,21 @@ struct ContentView: View {
                             .padding(4)
                             .background(Color(NSColor.textBackgroundColor))
                             .onChange(of: customSQL) { _, newValue in
-                                updateSuggestions(for: newValue)
+                                debounceTask?.cancel()
+                                debounceTask = Task {
+                                    try? await Task.sleep(nanoseconds: 150_000_000)
+                                    guard !Task.isCancelled else { return }
+                                    await updateSuggestions(for: newValue)
+                                }
+                            }
+                            .onKeyPress(.space, phases: .down) { press in
+                                if press.modifiers.contains(.control) {
+                                    Task {
+                                        await updateSuggestions(for: customSQL)
+                                    }
+                                    return .handled
+                                }
+                                return .ignored
                             }
 
                         if showSuggestions && !suggestions.isEmpty {
@@ -191,17 +206,6 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 800, minHeight: 600)
-        .overlay {
-            if dbManager.isLoading {
-                ZStack {
-                    Color.black.opacity(0.1)
-                    ProgressView("Loading...")
-                        .padding()
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(8)
-                }
-            }
-        }
         .toolbar {
             if dbManager.fileURL != nil {
                 ToolbarItem(placement: .primaryAction) {
@@ -223,7 +227,7 @@ struct ContentView: View {
 
     // MARK: - Autocomplete Logic
 
-    private func updateSuggestions(for text: String) {
+    private func updateSuggestions(for text: String) async {
         let words = text.components(separatedBy: .whitespacesAndNewlines)
         guard let lastWord = words.last else {
             showSuggestions = false
@@ -252,7 +256,7 @@ struct ContentView: View {
             let queryUpper = text.uppercased()
             let tablesInQuery = dbManager.tableNames.filter { queryUpper.contains($0.uppercased()) }
             if !tablesInQuery.isEmpty {
-                let columnsForQuery = dbManager.columns(for: tablesInQuery)
+                let columnsForQuery = await dbManager.columns(for: tablesInQuery)
                 columnMatches = columnsForQuery.filter {
                     $0.localizedCaseInsensitiveContains(prefix)
                 }
@@ -275,7 +279,7 @@ struct ContentView: View {
             let tablesInQuery = dbManager.tableNames.filter { queryUpper.contains($0.uppercased()) }
 
             if !tablesInQuery.isEmpty {
-                let columnsForQuery = dbManager.columns(for: tablesInQuery)
+                let columnsForQuery = await dbManager.columns(for: tablesInQuery)
                 columnMatches = columnsForQuery.filter {
                     $0.localizedCaseInsensitiveContains(wordToMatch)
                 }
@@ -324,370 +328,5 @@ struct ContentView: View {
 
         currentWord = ""  // Reset after insertion
         showSuggestions = false
-    }
-}
-
-struct DataTableView: View {
-    @Environment(DatabaseManager.self) private var dbManager
-
-    var body: some View {
-        VStack(spacing: 0) {
-            if dbManager.selectedTableName != nil {
-                FilterView()
-                    .padding(.bottom, 8)
-                    .background(Color(NSColor.windowBackgroundColor))
-
-                Divider()
-            }
-
-            if dbManager.columns.isEmpty {
-                VStack {
-                    Spacer()
-                    Text("No data to display")
-                        .foregroundColor(.secondary)
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                GeometryReader { geometry in
-                    ZStack(alignment: .bottom) {
-                        ScrollView([.horizontal, .vertical]) {
-                            LazyVStack(
-                                alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]
-                            ) {
-                                Section(header: HeaderView(columns: dbManager.columns)) {
-                                    ForEach(dbManager.rows) { row in
-                                        RowView(row: row, columns: dbManager.columns)
-                                    }
-                                }
-                            }
-                            // Add extra padding at the bottom so content isn't covered by the edit bar
-                            .padding(.bottom, !dbManager.activeEdits.isEmpty ? 60 : 0)
-                            .frame(
-                                minWidth: max(
-                                    geometry.size.width, CGFloat(dbManager.columns.count) * 150),
-                                minHeight: geometry.size.height,
-                                alignment: .topLeading
-                            )
-                        }
-                        .padding(.horizontal)
-
-                        if !dbManager.activeEdits.isEmpty {
-                            EditControlBar()
-                                .transition(.move(edge: .bottom))
-                        }
-                    }
-                }
-            }
-
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-struct EditControlBar: View {
-    @Environment(DatabaseManager.self) private var dbManager
-
-    var body: some View {
-        HStack {
-            Text("Editing \(dbManager.activeEdits.count) cell(s)...")
-                .font(.headline)
-                .foregroundColor(.secondary)
-
-            Spacer()
-
-            Button {
-                dbManager.cancelEdits()
-            } label: {
-                Text("Cancel")
-            }
-            .keyboardShortcut(.escape, modifiers: [])
-
-            Button {
-                dbManager.applyEdits()
-            } label: {
-                Text("Apply")
-            }
-            .buttonStyle(.borderedProminent)
-            .keyboardShortcut(.return, modifiers: [])
-        }
-        .padding()
-        .background(.ultraThinMaterial)
-        .overlay(Divider(), alignment: .top)
-    }
-}
-
-struct HeaderView: View {
-    let columns: [String]
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ForEach(columns, id: \.self) { column in
-                Text(column)
-                    .font(.headline)
-                    .padding(8)
-                    .frame(width: 150, alignment: .leading)
-                    .background(Color(NSColor.windowBackgroundColor))
-                    .border(Color.secondary.opacity(0.2))
-            }
-            Spacer(minLength: 0)
-        }
-    }
-}
-
-struct RowView: View {
-    let row: DBRow
-    let columns: [String]
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ForEach(columns, id: \.self) { column in
-                CellView(
-                    rowID: row.id, column: column,
-                    initialValue: row.data[column] ?? "")
-            }
-            Spacer(minLength: 0)
-        }
-    }
-}
-
-struct CellView: View {
-    @Environment(DatabaseManager.self) private var dbManager
-    let rowID: TableRowID
-    let column: String
-    let initialValue: String
-
-    var body: some View {
-        ZStack(alignment: .leading) {
-            if isEditing {
-                TextField(
-                    "",
-                    text: Binding(
-                        get: { dbManager.activeEdits[CellID(rowID: rowID, column: column)] ?? "" },
-                        set: { dbManager.updateActiveEdit(rowID: rowID, column: column, value: $0) }
-                    )
-                )
-                .textFieldStyle(.plain)
-                .padding(8)
-                .frame(width: 150, alignment: .leading)
-                .background(Color.blue.opacity(0.1))
-            } else {
-                Text(displayValue)
-                    .lineLimit(1)
-                    .padding(8)
-                    .frame(width: 150, alignment: .leading)
-                    .background(hasPendingChanges ? Color.yellow.opacity(0.1) : Color.clear)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        dbManager.startEditing(
-                            rowID: rowID, column: column, currentValue: displayValue)
-                    }
-            }
-        }
-        .border(Color.secondary.opacity(0.1))
-    }
-
-    var isEditing: Bool {
-        dbManager.activeEdits[CellID(rowID: rowID, column: column)] != nil
-    }
-
-    private func CellID(rowID: TableRowID, column: String) -> DatabaseManager.CellID {
-        DatabaseManager.CellID(rowID: rowID, column: column)
-    }
-
-    var hasPendingChanges: Bool {
-        dbManager.pendingChanges[rowID]?[column] != nil
-    }
-
-    var displayValue: String {
-        if let pending = dbManager.pendingChanges[rowID]?[column] {
-            return pending
-        }
-        return initialValue
-    }
-}
-
-struct StatusBar: View {
-    @Environment(DatabaseManager.self) private var dbManager
-    @Binding var selectedTab: Tab
-    var showTabs: Bool = true
-
-    var body: some View {
-        HStack {
-            if showTabs {
-                Picker("View", selection: $selectedTab) {
-                    ForEach(Tab.allCases) { tab in
-                        Text(tab.rawValue).tag(tab)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .controlSize(.small)
-                .labelsHidden()
-                .fixedSize()
-
-                Divider()
-                    .padding(.vertical, 4)
-            }
-
-            Text("Rows: \(dbManager.totalRows)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Spacer()
-
-            if selectedTab == .data {
-                Button {
-                    dbManager.previousPage()
-                } label: {
-                    Image(systemName: "chevron.left")
-                }
-                .buttonStyle(.plain)
-                .disabled(dbManager.offset == 0)
-
-                Text("Page \(currentPage) of \(totalPages)")
-                    .monospacedDigit()
-                    .font(.caption)
-
-                Button {
-                    dbManager.nextPage()
-                } label: {
-                    Image(systemName: "chevron.right")
-                }
-                .buttonStyle(.plain)
-                .disabled(dbManager.offset + dbManager.limit >= dbManager.totalRows)
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .frame(height: 28)
-        .background(Color(NSColor.windowBackgroundColor))
-        .overlay(Divider(), alignment: .top)
-    }
-
-    var currentPage: Int {
-        if dbManager.limit == 0 { return 1 }
-        return (dbManager.offset / dbManager.limit) + 1
-    }
-
-    var totalPages: Int {
-        if dbManager.limit == 0 { return 1 }
-        return max(1, Int(ceil(Double(dbManager.totalRows) / Double(dbManager.limit))))
-    }
-}
-
-struct FileMetadataView: View {
-    let fileName: String
-    let filePath: String
-    let fileSize: Int64
-    let dateModified: Date
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(fileName)
-                .font(.headline)
-            Text(filePath)
-                .font(.caption)
-                .foregroundColor(.secondary)
-            Text("Size: \(ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file))")
-                .font(.caption)
-                .foregroundColor(.secondary)
-            Text("Modified: \(dateModified.formatted())")
-                .font(.caption)
-                .foregroundColor(.secondary)
-        }
-    }
-}
-
-struct FilterView: View {
-    @Environment(DatabaseManager.self) private var dbManager
-
-    var body: some View {
-        @Bindable var dbManager = dbManager
-
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach($dbManager.filters) { $filter in
-                HStack {
-                    if !dbManager.columns.isEmpty {
-                        Picker("Column", selection: $filter.column) {
-                            ForEach(dbManager.columns, id: \.self) { column in
-                                Text(column).tag(column)
-                            }
-                        }
-                        .labelsHidden()
-                        .frame(width: 150)
-                    }
-
-                    Picker("Operator", selection: $filter.operatorType) {
-                        ForEach(DatabaseManager.FilterOperator.allCases) { op in
-                            Text(op.rawValue).tag(op)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 120)
-
-                    TextField("Value", text: $filter.value)
-                        .textFieldStyle(.roundedBorder)
-
-                    Button {
-                        if let index = dbManager.filters.firstIndex(where: { $0.id == filter.id }) {
-                            dbManager.filters.remove(at: index)
-                        }
-                    } label: {
-                        Image(systemName: "minus.circle.fill")
-                            .foregroundColor(.red)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            HStack {
-                Button {
-                    let firstColumn = dbManager.columns.first ?? ""
-                    let newFilter = DatabaseManager.FilterCriteria(
-                        column: firstColumn,
-                        operatorType: .contains,
-                        value: ""
-                    )
-                    dbManager.filters.append(newFilter)
-                } label: {
-                    Label("Add Filter", systemImage: "plus.circle")
-                }
-                .buttonStyle(.plain)
-                .disabled(dbManager.columns.isEmpty)
-
-                Spacer()
-
-                Button("Apply") {
-                    Task {
-                        await dbManager.applyFilter()
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(dbManager.filters.isEmpty)
-
-                Button("Clear") {
-                    Task {
-                        await dbManager.clearFilter()
-                    }
-                }
-                .disabled(dbManager.filters.isEmpty)
-            }
-        }
-        .padding(8)
-    }
-}
-
-struct SchemaView: View {
-    @Environment(DatabaseManager.self) private var dbManager
-
-    var body: some View {
-        ScrollView {
-            Text(dbManager.tableDDL)
-                .font(.system(.body, design: .monospaced))
-                .padding()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
-        }
-        .background(Color(NSColor.textBackgroundColor))
     }
 }

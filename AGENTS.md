@@ -54,9 +54,10 @@
 - [x] GitHub Actions for automated releases.
 
 ### Future Enhancements
-- Export query results to CSV/JSON.
-- Import data from CSV/JSON.
-- Drag-and-drop table names into SQL query.
-- Clickable foreign key values for navigation.
-- Version check and update notifications.
-
+- Export query results to CSV/JSON/SQL statement
+- Drag-and-drop table names into SQL query (from sidebar)
+- Clickable foreign key values for navigation
+- Version check and update notifications (check GitHub releases)
+- Tabs for multiple ad-hoc sql queries
+- Search on table names in sidebar
+- Package signing
