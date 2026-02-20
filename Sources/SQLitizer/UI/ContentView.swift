@@ -1,9 +1,29 @@
+import CodeEditor
 import SwiftUI
+
+enum Tab: String, CaseIterable, Identifiable {
+    case data = "Data"
+    case schema = "Schema"
+    var id: String { rawValue }
+}
 
 struct ContentView: View {
     @Environment(DatabaseManager.self) private var dbManager
     @State private var showSQLConsole = false
+    @State private var selectedTab: Tab = .data
     @State private var customSQL = ""
+
+    // Autocomplete State
+    @State private var suggestions: [String] = []
+    @State private var showSuggestions = false
+    @State private var currentWord = ""
+
+    private let sqlKeywords = [
+        "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET",
+        "DELETE", "CREATE", "TABLE", "DROP", "ALTER", "AND", "OR", "NOT",
+        "ORDER BY", "GROUP BY", "JOIN", "INNER JOIN", "LEFT JOIN", "ON", "AS",
+        "ASC", "DESC", "LIMIT", "OFFSET", "PRAGMA",
+    ]
 
     var body: some View {
         NavigationSplitView {
@@ -33,6 +53,7 @@ struct ContentView: View {
                 if let tableName = newValue {
                     Task {
                         await dbManager.selectTable(tableName)
+                        showSQLConsole = false
                     }
                 }
             }
@@ -47,11 +68,42 @@ struct ContentView: View {
         } detail: {
             if showSQLConsole {
                 VStack(spacing: 0) {
-                    TextEditor(text: $customSQL)
-                        .font(.system(.body, design: .monospaced))
-                        .frame(height: 150)
-                        .padding(4)
-                        .background(Color(NSColor.textBackgroundColor))
+                    ZStack(alignment: .bottomLeading) {
+                        CodeEditor(source: $customSQL, language: .sql)
+                            .frame(height: 150)
+                            .padding(4)
+                            .background(Color(NSColor.textBackgroundColor))
+                            .onChange(of: customSQL) { _, newValue in
+                                updateSuggestions(for: newValue)
+                            }
+
+                        if showSuggestions && !suggestions.isEmpty {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach(suggestions, id: \.self) { suggestion in
+                                        Button {
+                                            insertSuggestion(suggestion)
+                                        } label: {
+                                            Text(suggestion)
+                                                .font(.caption)
+                                                .padding(.horizontal, 8)
+                                                .padding(.vertical, 4)
+                                                .background(Color.accentColor.opacity(0.2))
+                                                .cornerRadius(4)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                            }
+                            .background(.regularMaterial)
+                            .cornerRadius(6)
+                            .shadow(radius: 2)
+                            .padding(.leading, 8)
+                            .padding(.bottom, 8)
+                        }
+                    }
 
                     HStack {
                         Button {
@@ -65,14 +117,6 @@ struct ContentView: View {
                         .keyboardShortcut(.return, modifiers: .command)
 
                         Spacer()
-
-                        Button {
-                            showSQLConsole = false
-                        } label: {
-                            Label("Hide", systemImage: "chevron.down")
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundColor(.secondary)
                     }
                     .padding(8)
                     .background(Color(NSColor.windowBackgroundColor))
@@ -80,53 +124,62 @@ struct ContentView: View {
                     Divider()
 
                     DataTableView()
+                    StatusBar(selectedTab: $selectedTab, showTabs: false)
                 }
                 .navigationTitle("SQL Console")
             } else if let tableName = dbManager.selectedTableName {
-                DataTableView()
-                    .navigationTitle(tableName)
-                    .toolbar {
-                        ToolbarItem(placement: .primaryAction) {
-                            Button {
-                                showSQLConsole.toggle()
-                            } label: {
-                                Label("SQL Console", systemImage: "terminal")
-                            }
-                            .help("Open SQL Console (Cmd+T)")
-                        }
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button {
-                                Task {
-                                    await dbManager.saveChanges()
-                                }
-                            } label: {
-                                Label("Save", systemImage: "checkmark.circle.fill")
-                            }
-                            .disabled(!dbManager.hasChanges)
-                            .help("Save changes to database")
-                        }
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button {
-                                dbManager.discardChanges()
-                            } label: {
-                                Label("Discard", systemImage: "arrow.uturn.backward.circle")
-                            }
-                            .disabled(!dbManager.hasChanges)
-                            .help("Discard unsaved changes")
-                        }
+                VStack(spacing: 0) {
+                    switch selectedTab {
+                    case .data:
+                        DataTableView()
+                    case .schema:
+                        SchemaView()
                     }
+
+                    StatusBar(selectedTab: $selectedTab)
+                }
+                .navigationTitle(tableName)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button {
+                            Task {
+                                await dbManager.saveChanges()
+                            }
+                        } label: {
+                            Label("Save", systemImage: "checkmark.circle.fill")
+                        }
+                        .disabled(!dbManager.hasChanges)
+                        .help("Save changes to database")
+                    }
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button {
+                            dbManager.discardChanges()
+                        } label: {
+                            Label("Discard", systemImage: "arrow.uturn.backward.circle")
+                        }
+                        .disabled(!dbManager.hasChanges)
+                        .help("Discard unsaved changes")
+                    }
+                }
             } else {
                 VStack(spacing: 20) {
                     Image(systemName: "square.grid.3x2")
                         .font(.system(size: 48))
                         .foregroundColor(.secondary)
-                    Text("Select a table or open a database")
-                        .font(.headline)
-                        .foregroundColor(.secondary)
-                    Button("Open SQLite File...") {
-                        dbManager.openFile()
+
+                    if dbManager.fileURL != nil {
+                        Text("Select a table or open the SQL Console")
+                            .font(.headline)
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text("Open a database")
+                            .font(.headline)
+                            .foregroundColor(.secondary)
+                        Button("Open SQLite File...") {
+                            dbManager.openFile()
+                        }
+                        .buttonStyle(.borderedProminent)
                     }
-                    .buttonStyle(.borderedProminent)
 
                     if let error = dbManager.errorMessage {
                         Text(error)
@@ -149,6 +202,128 @@ struct ContentView: View {
                 }
             }
         }
+        .toolbar {
+            if dbManager.fileURL != nil {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showSQLConsole.toggle()
+                        if showSQLConsole {
+                            dbManager.clearDataForSQLConsole()
+                        }
+                    } label: {
+                        Label(
+                            "SQL Console",
+                            systemImage: showSQLConsole ? "terminal.fill" : "terminal")
+                    }
+                    .help("Toggle SQL Console (Cmd+T)")
+                }
+            }
+        }
+    }
+
+    // MARK: - Autocomplete Logic
+
+    private func updateSuggestions(for text: String) {
+        let words = text.components(separatedBy: .whitespacesAndNewlines)
+        guard let lastWord = words.last else {
+            showSuggestions = false
+            suggestions = []
+            return
+        }
+
+        currentWord = lastWord
+        let previousWord = words.dropLast().last?.uppercased()
+
+        var keywordMatches: [String] = []
+        var tableMatches: [String] = []
+        var columnMatches: [String] = []
+
+        let wordToMatch = lastWord.lowercased()
+
+        // Handle alias patterns like `P.` -> suggest columns
+        let components = lastWord.split(separator: ".")
+        let aliasColumnPrefix =
+            components.count == 2
+            ? String(components[1]).lowercased() : (lastWord.hasSuffix(".") ? "" : nil)
+
+        // If typing an alias (e.g. "P.")
+        if let prefix = aliasColumnPrefix {
+            // Suggest columns for tables present in the query
+            let queryUpper = text.uppercased()
+            let tablesInQuery = dbManager.tableNames.filter { queryUpper.contains($0.uppercased()) }
+            if !tablesInQuery.isEmpty {
+                let columnsForQuery = dbManager.columns(for: tablesInQuery)
+                columnMatches = columnsForQuery.filter {
+                    $0.localizedCaseInsensitiveContains(prefix)
+                }
+            } else {
+                columnMatches = dbManager.columns.filter {
+                    $0.localizedCaseInsensitiveContains(prefix)
+                }
+            }
+        }
+        // If the previous word indicates we need a table (FROM, JOIN)
+        else if previousWord == "FROM" || previousWord == "JOIN" {
+            tableMatches = dbManager.tableNames.filter {
+                $0.localizedCaseInsensitiveContains(wordToMatch)
+            }
+        }
+        // If the previous word indicates we need a column (WHERE, ON, SELECT)
+        else if previousWord == "WHERE" || previousWord == "ON" || previousWord == "SELECT" {
+            // Find tables mentioned in the query to suggest their columns
+            let queryUpper = text.uppercased()
+            let tablesInQuery = dbManager.tableNames.filter { queryUpper.contains($0.uppercased()) }
+
+            if !tablesInQuery.isEmpty {
+                let columnsForQuery = dbManager.columns(for: tablesInQuery)
+                columnMatches = columnsForQuery.filter {
+                    $0.localizedCaseInsensitiveContains(wordToMatch)
+                }
+            } else {
+                columnMatches = dbManager.columns.filter {
+                    $0.localizedCaseInsensitiveContains(wordToMatch)
+                }
+            }
+        }
+        // Otherwise, general autocomplete
+        else {
+            if !wordToMatch.isEmpty {
+                keywordMatches = sqlKeywords.filter {
+                    $0.localizedCaseInsensitiveContains(wordToMatch)
+                }
+                tableMatches = dbManager.tableNames.filter {
+                    $0.localizedCaseInsensitiveContains(wordToMatch)
+                }
+                columnMatches = dbManager.columns.filter {
+                    $0.localizedCaseInsensitiveContains(wordToMatch)
+                }
+            }
+        }
+
+        let allMatches = Array(Set(keywordMatches + tableMatches + columnMatches)).sorted()
+
+        suggestions = allMatches
+        showSuggestions = !suggestions.isEmpty
+    }
+
+    private func insertSuggestion(_ suggestion: String) {
+        if currentWord.isEmpty {
+            // We were typing a new word after a space, so just append
+            customSQL += suggestion + " "
+        } else {
+            // Check if it's an alias form, e.g., P.
+            if currentWord.contains(".") {
+                let parts = currentWord.components(separatedBy: ".")
+                let prefix = parts.first ?? ""
+                customSQL =
+                    String(customSQL.dropLast(currentWord.count)) + "\(prefix).\(suggestion) "
+            } else {
+                customSQL = String(customSQL.dropLast(currentWord.count)) + "\(suggestion) "
+            }
+        }
+
+        currentWord = ""  // Reset after insertion
+        showSuggestions = false
     }
 }
 
@@ -205,7 +380,6 @@ struct DataTableView: View {
                 }
             }
 
-            StatusBar()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -297,9 +471,6 @@ struct CellView: View {
                 .padding(8)
                 .frame(width: 150, alignment: .leading)
                 .background(Color.blue.opacity(0.1))
-                .onSubmit {
-                    // dbManager.applyEdits() // Don't apply on enter, let them edit multiple
-                }
             } else {
                 Text(displayValue)
                     .lineLimit(1)
@@ -338,33 +509,57 @@ struct CellView: View {
 
 struct StatusBar: View {
     @Environment(DatabaseManager.self) private var dbManager
+    @Binding var selectedTab: Tab
+    var showTabs: Bool = true
 
     var body: some View {
         HStack {
-            Text("Total Rows: \(dbManager.totalRows)")
+            if showTabs {
+                Picker("View", selection: $selectedTab) {
+                    ForEach(Tab.allCases) { tab in
+                        Text(tab.rawValue).tag(tab)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .controlSize(.small)
+                .labelsHidden()
+                .fixedSize()
+
+                Divider()
+                    .padding(.vertical, 4)
+            }
+
+            Text("Rows: \(dbManager.totalRows)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             Spacer()
 
-            Button {
-                dbManager.previousPage()
-            } label: {
-                Image(systemName: "chevron.left")
-            }
-            .buttonStyle(.plain)
-            .disabled(dbManager.offset == 0)
+            if selectedTab == .data {
+                Button {
+                    dbManager.previousPage()
+                } label: {
+                    Image(systemName: "chevron.left")
+                }
+                .buttonStyle(.plain)
+                .disabled(dbManager.offset == 0)
 
-            Text("Page \(currentPage) of \(totalPages)")
-                .monospacedDigit()
+                Text("Page \(currentPage) of \(totalPages)")
+                    .monospacedDigit()
+                    .font(.caption)
 
-            Button {
-                dbManager.nextPage()
-            } label: {
-                Image(systemName: "chevron.right")
+                Button {
+                    dbManager.nextPage()
+                } label: {
+                    Image(systemName: "chevron.right")
+                }
+                .buttonStyle(.plain)
+                .disabled(dbManager.offset + dbManager.limit >= dbManager.totalRows)
             }
-            .buttonStyle(.plain)
-            .disabled(dbManager.offset + dbManager.limit >= dbManager.totalRows)
         }
-        .padding(8)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .frame(height: 28)
         .background(Color(NSColor.windowBackgroundColor))
         .overlay(Divider(), alignment: .top)
     }
@@ -479,5 +674,20 @@ struct FilterView: View {
             }
         }
         .padding(8)
+    }
+}
+
+struct SchemaView: View {
+    @Environment(DatabaseManager.self) private var dbManager
+
+    var body: some View {
+        ScrollView {
+            Text(dbManager.tableDDL)
+                .font(.system(.body, design: .monospaced))
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+        }
+        .background(Color(NSColor.textBackgroundColor))
     }
 }

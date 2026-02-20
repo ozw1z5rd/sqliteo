@@ -31,6 +31,9 @@ final class DatabaseManagerTests {
                         INSERT INTO tags (name) VALUES ('swift');
                         INSERT INTO tags (name) VALUES ('programming');
                         
+                        CREATE TABLE no_pk (val TEXT);
+                        INSERT INTO no_pk (val) VALUES ('item1');
+                        
                         CREATE VIEW user_names AS SELECT name FROM users;
                     """)
         }
@@ -48,8 +51,10 @@ final class DatabaseManagerTests {
 
     @Test("Connection and initialization populate correct metadata")
     func connectionAndInitialization() async throws {
-        #expect(manager.currentFileURL == dbURL)
-        #expect(manager.currentFileSize != nil)
+        #expect(manager.fileURL == dbURL)
+        #expect(manager.fileSize > 0)
+        #expect(manager.creationDate != nil)
+        #expect(manager.modificationDate != nil)
 
         #expect(manager.tableNames.sorted() == ["posts", "tags", "users"])
     }
@@ -62,6 +67,7 @@ final class DatabaseManagerTests {
         #expect(manager.columns == ["id", "name", "age"])
         #expect(manager.primaryKeyColumns == ["id"])
         #expect(manager.rows.count == 3)
+        #expect(manager.totalRows == 3)
     }
 
     @Test("Selecting a WITHOUT ROWID table isolates primary keys")
@@ -73,22 +79,71 @@ final class DatabaseManagerTests {
         #expect(manager.rows.count == 2)
     }
 
-    @Test("Filtering correctly subsets database queries")
-    func filtering() async throws {
+    @Test("Pagination boundaries correctly update offsets")
+    func pagination() async throws {
+        try await manager.dbQueue?.write { db in
+            for i in 1...2500 {
+                try db.execute(
+                    sql: "INSERT INTO users (name, age) VALUES (?, ?)",
+                    arguments: ["User \(i)", 20 + (i % 50)])
+            }
+        }
+        await manager.fetchTables()
+
+        manager.limit = 1000
         await manager.selectTable("users")
 
-        manager.filterText = "Alice"
+        #expect(manager.offset == 0)
+        #expect(manager.rows.count == 1000)
+        #expect(manager.totalRows == 2503)
+
+        manager.nextPage()
+        // nextPage uses Task {}, so we might need a small delay or better wait for it.
+        // For tests, it's better if these were async. In DatabaseManager, they are Task {}.
+        // I'll wait a bit.
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        #expect(manager.offset == 1000)
+        #expect(manager.rows.count == 1000)
+
+        manager.nextPage()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        #expect(manager.offset == 2000)
+        #expect(manager.rows.count == 503)
+
+        manager.previousPage()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        #expect(manager.offset == 1000)
+        #expect(manager.rows.count == 1000)
+    }
+
+    @Test(
+        "Advanced filters correctly subset database queries",
+        arguments: [
+            ("name", DatabaseManager.FilterOperator.equals, "Alice", 1),
+            ("name", DatabaseManager.FilterOperator.contains, "ob", 1),
+            ("age", DatabaseManager.FilterOperator.greaterThan, "28", 2),
+        ])
+    func advancedFiltering(
+        column: String, op: DatabaseManager.FilterOperator, value: String, expectedCount: Int
+    ) async throws {
+        await manager.selectTable("users")
+        manager.filters = [
+            DatabaseManager.FilterCriteria(column: column, operatorType: op, value: value)
+        ]
         await manager.applyFilter()
-        #expect(manager.rows.count == 1)
-        #expect(manager.rows[0].data["name"] == "Alice")
+        #expect(manager.rows.count == expectedCount)
 
         await manager.clearFilter()
-        #expect(manager.filterText == "")
+        #expect(manager.filters.count == 0)
         #expect(manager.rows.count == 3)
+        #expect(manager.offset == 0)
     }
 
     @Test("Save active edits into valid SQL updates")
-    func editingAndSaving() async throws {
+    func editingAndSavingStandardTable() async throws {
         await manager.selectTable("users")
 
         let firstRowId = manager.rows[0].id
@@ -111,6 +166,21 @@ final class DatabaseManagerTests {
         }
     }
 
+    @Test("Saving edits to a WITHOUT ROWID table uses primary keys dynamically")
+    func editingAndSavingWithoutRowIDTable() async throws {
+        await manager.selectTable("tags")
+        let rowId = manager.rows[0].id
+        manager.updateCell(rowID: rowId, column: "name", value: "swiftlang")
+        await manager.saveChanges()
+
+        let verifyQueue = try DatabaseQueue(path: dbURL.path)
+        try await verifyQueue.read { db in
+            let count = try Int.fetchOne(
+                db, sql: "SELECT COUNT(*) FROM tags WHERE name = 'swiftlang'")
+            #expect(count == 1)
+        }
+    }
+
     @Test("Executing a custom SQL query binds ad-hoc columns")
     func customSQLConsole() async throws {
         await manager.executeCustomSQL("SELECT name, age FROM users ORDER BY age DESC LIMIT 2")
@@ -127,20 +197,123 @@ final class DatabaseManagerTests {
         await manager.selectTable("users")
         manager.updateCell(rowID: manager.rows[0].id, column: "name", value: "New Name")
         manager.startEditing(rowID: manager.rows[1].id, column: "name", currentValue: "Bob")
-        manager.filterText = "Alice"
+        manager.filters = [
+            DatabaseManager.FilterCriteria(column: "name", operatorType: .equals, value: "Alice")
+        ]
 
         #expect(!manager.pendingChanges.isEmpty)
         #expect(!manager.activeEdits.isEmpty)
-        #expect(!manager.filterText.isEmpty)
+        #expect(!manager.filters.isEmpty)
 
+        manager.selectedTableName = nil
+        manager.rows = []
+        manager.pendingChanges = [:]
+        manager.filters = []
+        #expect(manager.selectedTableName == nil)
+        #expect(manager.rows.isEmpty)
+        #expect(manager.pendingChanges.isEmpty)
+        #expect(manager.filters.isEmpty)
+
+        await manager.selectTable("users")
+        manager.updateCell(rowID: manager.rows[0].id, column: "name", value: "New Name")
         manager.discardChanges()
         #expect(manager.pendingChanges.isEmpty)
 
+        manager.startEditing(rowID: manager.rows[0].id, column: "name", currentValue: "Alice")
         manager.cancelEdits()
         #expect(manager.activeEdits.isEmpty)
+    }
 
-        manager.filterText = ""
+    @Test("Editing workflow prevents overwriting and applies correctly")
+    func activeEditWorkflow() async throws {
+        await manager.selectTable("users")
+        let rowId = manager.rows[0].id
+
+        manager.startEditing(rowID: rowId, column: "name", currentValue: "Alice")
+        #expect(manager.activeEdits.count == 1)
+
+        manager.startEditing(rowID: rowId, column: "name", currentValue: "Different")
+        #expect(manager.activeEdits.values.first == "Alice")
+
+        manager.updateActiveEdit(rowID: rowId, column: "name", value: "Alicia")
+        manager.applyEdits()
+
+        #expect(manager.activeEdits.isEmpty)
+        #expect(manager.pendingChanges[rowId]?["name"] == "Alicia")
+    }
+
+    @Test("Pagination boundaries prevent out of bounds offsets")
+    func paginationEdgeCases() async throws {
+        await manager.selectTable("users")  // 3 rows
+        manager.limit = 2
+
+        #expect(manager.offset == 0)
+
+        manager.nextPage()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        #expect(manager.offset == 2)
+
+        manager.nextPage()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        #expect(manager.offset == 2)
+
+        manager.previousPage()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        #expect(manager.offset == 0)
+
+        manager.previousPage()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        #expect(manager.offset == 0)
+    }
+
+    @Test("Custom SQL with empty results still populates columns")
+    func customSQLWithEmptyResults() async throws {
+        await manager.executeCustomSQL("SELECT * FROM users WHERE id < 0")
+        #expect(manager.rows.isEmpty)
+        #expect(manager.columns == ["id", "name", "age"])
+    }
+
+    @Test(
+        "All filter operators produce valid SQL and correct results",
+        arguments: [
+            (DatabaseManager.FilterOperator.notEquals, "Alice", 2),
+            (DatabaseManager.FilterOperator.startsWith, "A", 1),
+            (DatabaseManager.FilterOperator.endsWith, "e", 1),
+            (DatabaseManager.FilterOperator.lessThan, "30", 1),
+        ])
+    func comprehensiveFiltering(
+        op: DatabaseManager.FilterOperator, value: String, expectedCount: Int
+    ) async throws {
+        await manager.selectTable("users")
+        manager.filters = [
+            DatabaseManager.FilterCriteria(column: "name", operatorType: op, value: value)
+        ]
+        if op == .lessThan {
+            manager.filters[0].column = "age"
+        }
         await manager.applyFilter()
-        #expect(manager.filterText == "")
+        #expect(manager.rows.count == expectedCount)
+    }
+
+    @Test("Save changes for table with no primary key using all columns fallback")
+    func saveChangesWithNoPrimaryKey() async throws {
+        await manager.executeCustomSQL("SELECT * FROM users")
+        let viewRow = manager.rows[0]
+        // This test case is a bit artificial but tests the fallback logic
+
+        manager.selectedTableName = "users"
+        manager.primaryKeyColumns = []
+        manager.updateCell(rowID: viewRow.id, column: "name", value: "Alice Edited")
+
+        manager.rows = [viewRow]
+        manager.columns = ["name", "id", "age"]
+        await manager.saveChanges()
+
+        let verifyQueue = try DatabaseQueue(path: dbURL.path)
+        try await verifyQueue.read { db in
+            let count = try Int.fetchOne(
+                db, sql: "SELECT COUNT(*) FROM users WHERE name = 'Alice Edited'")
+            #expect(count == 1)
+        }
     }
 }

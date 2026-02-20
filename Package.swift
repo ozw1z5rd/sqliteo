@@ -10,13 +10,15 @@ let package = Package(
         .executable(name: "SQLitizer", targets: ["SQLitizer"])
     ],
     dependencies: [
-        .package(url: "https://github.com/groue/GRDB.swift.git", from: "6.29.3")
+        .package(url: "https://github.com/groue/GRDB.swift.git", from: "6.29.3"),
+        .package(url: "https://github.com/ZeeZide/CodeEditor.git", from: "1.0.0"),
     ],
     targets: [
         .executableTarget(
             name: "SQLitizer",
             dependencies: [
-                .product(name: "GRDB", package: "GRDB.swift")
+                .product(name: "GRDB", package: "GRDB.swift"),
+                .product(name: "CodeEditor", package: "CodeEditor"),
             ],
             resources: [
                 .process("Assets.xcassets")

@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import GRDB
+import Observation
 import UniformTypeIdentifiers
 
 enum TableRowID: Hashable {
@@ -24,35 +25,27 @@ class DatabaseManager {
     var primaryKeyColumns: [String] = []
     var rows: [DBRow] = []
 
-    // File Metadata
-    var fileURL: URL?
-    var fileSize: Int64 = 0
-    var creationDate: Date?
-    var modificationDate: Date?
+    // Tracks local edits: [RowID: [ColumnName: NewValue]]
+    var pendingChanges: [TableRowID: [String: String]] = [:]
 
-    // Loading state
-    var isLoading: Bool = false
-    var errorMessage: String? = nil
-
-    // Pagination
-    var limit: Int = 1000
-    var offset: Int = 0
+    // Pagination and Filtering
     var totalRows: Int = 0
+    var offset: Int = 0
+    var limit: Int = 1000
 
-    // Advanced Filtering
-    struct FilterCriteria: Identifiable, Equatable {
-        let id = UUID()
+    struct FilterCriteria: Identifiable, Codable {
+        var id = UUID()
         var column: String
         var operatorType: FilterOperator
         var value: String
     }
 
-    enum FilterOperator: String, CaseIterable, Identifiable {
+    enum FilterOperator: String, CaseIterable, Identifiable, Codable {
         case equals = "="
         case notEquals = "!="
-        case contains = "CONTAINS"
-        case startsWith = "STARTS WITH"
-        case endsWith = "ENDS WITH"
+        case contains = "contains"
+        case startsWith = "starts with"
+        case endsWith = "ends with"
         case greaterThan = ">"
         case lessThan = "<"
 
@@ -67,15 +60,18 @@ class DatabaseManager {
     }
 
     var filters: [FilterCriteria] = []
+    var tableDDL: String = ""
 
-    // Tracks local edits: [RowID: [ColumnName: NewValue]]
-    var pendingChanges: [TableRowID: [String: String]] = [:]
+    // Track loading state
+    var isLoading: Bool = false
+    var errorMessage: String? = nil
 
-    var hasChanges: Bool {
-        !pendingChanges.isEmpty
-    }
+    // File Metadata
+    var fileURL: URL?
+    var fileSize: Int64 = 0
+    var creationDate: Date?
+    var modificationDate: Date?
 
-    // Cell Editing
     struct CellID: Hashable {
         let rowID: TableRowID
         let column: String
@@ -120,37 +116,32 @@ class DatabaseManager {
             self.creationDate = attr[.creationDate] as? Date
             self.modificationDate = attr[.modificationDate] as? Date
 
-            // DatabaseQueue instantiation is fast, but we can do it off-actor if strictly needed.
             let path = url.path
             let queue = try await Task.detached {
                 try DatabaseQueue(path: path)
             }.value
 
             self.dbQueue = queue
-            await fetchTables()
+            try await fetchTables()
         } catch {
             self.errorMessage = "Error connecting to database: \(error.localizedDescription)"
         }
     }
 
-    func fetchTables() async {
+    func fetchTables() async throws {
         guard let dbQueue = dbQueue else { return }
 
         self.isLoading = true
         defer { self.isLoading = false }
 
-        do {
-            let tables = try await dbQueue.read { db in
-                try String.fetchAll(
-                    db,
-                    sql:
-                        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
-                )
-            }
-            self.tableNames = tables
-        } catch {
-            self.errorMessage = "Error fetching tables: \(error.localizedDescription)"
+        let tables = try await dbQueue.read { db in
+            try String.fetchAll(
+                db,
+                sql:
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            )
         }
+        self.tableNames = tables
     }
 
     func selectTable(_ tableName: String) async {
@@ -158,6 +149,7 @@ class DatabaseManager {
         self.pendingChanges = [:]
         self.filters = []
         self.offset = 0
+        self.tableDDL = ""
         self.isLoading = true
         self.errorMessage = nil
 
@@ -166,39 +158,80 @@ class DatabaseManager {
         do {
             try await fetchPrimaryKeys(for: tableName)
             try await fetchColumns(for: tableName)
+            try await fetchTableDDL(for: tableName)
             try await fetchRows(for: tableName)
         } catch {
             self.errorMessage = "Error loading table data: \(error.localizedDescription)"
         }
     }
 
+    func clearDataForSQLConsole() {
+        self.selectedTableName = nil
+        self.columns = []
+        self.rows = []
+        self.totalRows = 0
+        self.offset = 0
+        self.pendingChanges = [[:] as TableRowID: [:]]  // Wait, cleanup properly
+        self.pendingChanges = [:]
+        self.filters = []
+        self.tableDDL = ""
+        self.primaryKeyColumns = []
+    }
+
+    private func fetchTableDDL(for tableName: String) async throws {
+        guard let dbQueue = dbQueue else { return }
+
+        let ddl = try await dbQueue.read { db in
+            let sql = "SELECT sql FROM sqlite_master WHERE type='table' AND name = ?"
+            return try String.fetchOne(db, sql: sql, arguments: [tableName]) ?? "/* No DDL found */"
+        }
+        self.tableDDL = ddl
+    }
+
     private func fetchPrimaryKeys(for tableName: String) async throws {
         guard let dbQueue = dbQueue else { return }
 
-        try await dbQueue.read { db in
+        let pks = try await dbQueue.read { db in
             let columnsInfo = try db.columns(in: tableName)
-            self.primaryKeyColumns = columnsInfo.filter { $0.primaryKeyIndex > 0 }.map { $0.name }
+            return columnsInfo.filter { $0.primaryKeyIndex > 0 }.map { $0.name }
         }
+        self.primaryKeyColumns = pks
     }
 
     private func fetchColumns(for tableName: String) async throws {
         guard let dbQueue = dbQueue else { return }
 
-        try await dbQueue.read { db in
+        let cols = try await dbQueue.read { db in
             let columnsInfo = try db.columns(in: tableName)
-            self.columns = columnsInfo.map { $0.name }
+            return columnsInfo.map { $0.name }
         }
+        self.columns = cols
+    }
+
+    func columns(for tables: [String]) -> [String] {
+        guard let dbQueue = dbQueue else { return [] }
+        var allColumns = Set<String>()
+        // This is a synchronous call used by autocomplete, might want to optimize if slow
+        try? dbQueue.read { db in
+            for table in tables {
+                if let columnsInfo = try? db.columns(in: table) {
+                    for col in columnsInfo {
+                        allColumns.insert(col.name)
+                    }
+                }
+            }
+        }
+        return Array(allColumns).sorted()
     }
 
     func fetchRows(for tableName: String) async throws {
         guard let dbQueue = dbQueue else { return }
 
-        try await dbQueue.read { db in
+        let (total, fetchedRows) = try await dbQueue.read { db -> (Int, [DBRow]) in
             // 1. Get Total Count
             var countSql = "SELECT COUNT(*) FROM \(tableName)"
             var arguments: StatementArguments = []
 
-            // Build WHERE clause
             var whereClauses: [String] = []
             var whereArgs: [DatabaseValueConvertible] = []
 
@@ -222,7 +255,7 @@ class DatabaseManager {
                 arguments = StatementArguments(whereArgs)
             }
 
-            self.totalRows = try Int.fetchOne(db, sql: countSql, arguments: arguments) ?? 0
+            let total = try Int.fetchOne(db, sql: countSql, arguments: arguments) ?? 0
 
             // 2. Fetch Data
             var selectColumns = "*"
@@ -236,7 +269,6 @@ class DatabaseManager {
             }
 
             var sql = "SELECT \(selectColumns) FROM \(tableName)"
-
             if !whereClauses.isEmpty {
                 let whereString = whereClauses.joined(separator: " AND ")
                 sql += " WHERE \(whereString)"
@@ -245,7 +277,7 @@ class DatabaseManager {
             sql += " LIMIT \(self.limit) OFFSET \(self.offset)"
 
             let rows = try Row.fetchAll(db, sql: sql, arguments: arguments)
-            self.rows = rows.map { row in
+            let dbRows = rows.map { row in
                 var dict: [String: String] = [:]
                 for column in self.columns {
                     if let val = row[column] {
@@ -277,7 +309,11 @@ class DatabaseManager {
 
                 return DBRow(id: id, data: dict)
             }
+            return (total, dbRows)
         }
+
+        self.totalRows = total
+        self.rows = fetchedRows
     }
 
     func nextPage() {
@@ -334,8 +370,8 @@ class DatabaseManager {
 
             self.columns = newColumns
             self.rows = newRows
-            self.primaryKeyColumns = []
             self.totalRows = self.rows.count
+            self.primaryKeyColumns = []
         } catch {
             self.errorMessage = "Error executing SQL: \(error.localizedDescription)"
         }
