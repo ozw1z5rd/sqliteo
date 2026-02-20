@@ -142,6 +142,7 @@ struct ContentView: View {
                     StatusBar(selectedTab: $selectedTab, showTabs: false)
                 }
                 .navigationTitle("SQL Console")
+                .overlay(LoadingOverlay(isLoading: dbManager.isLoading))
             } else if let tableName = dbManager.selectedTableName {
                 VStack(spacing: 0) {
                     switch selectedTab {
@@ -154,6 +155,7 @@ struct ContentView: View {
                     StatusBar(selectedTab: $selectedTab)
                 }
                 .navigationTitle(tableName)
+                .overlay(LoadingOverlay(isLoading: dbManager.isLoading))
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {
                         Button {

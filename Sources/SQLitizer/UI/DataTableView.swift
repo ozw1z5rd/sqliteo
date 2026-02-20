@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct DataTableView: View {
@@ -22,40 +23,232 @@ struct DataTableView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                GeometryReader { geometry in
-                    ZStack(alignment: .bottom) {
-                        ScrollView([.horizontal, .vertical]) {
-                            LazyVStack(
-                                alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]
-                            ) {
-                                Section(header: HeaderView(columns: dbManager.columns)) {
-                                    ForEach(dbManager.rows) { row in
-                                        RowView(
-                                            row: row, columns: dbManager.columns, isSelected: false)
-                                    }
-                                }
-                            }
-                            // Add extra padding at the bottom so content isn't covered by the edit bar
-                            .padding(.bottom, !dbManager.activeEdits.isEmpty ? 60 : 0)
-                            .frame(
-                                minWidth: max(
-                                    geometry.size.width, CGFloat(dbManager.columns.count) * 150),
-                                minHeight: geometry.size.height,
-                                alignment: .topLeading
-                            )
-                        }
-                        .padding(.horizontal)
+                ZStack(alignment: .bottom) {
+                    DataTableRepresentable()
+                        .padding(.bottom, !dbManager.activeEdits.isEmpty ? 60 : 0)
 
-                        if !dbManager.activeEdits.isEmpty {
-                            EditControlBar()
-                                .transition(.move(edge: .bottom))
-                        }
+                    if !dbManager.activeEdits.isEmpty {
+                        EditControlBar()
+                            .transition(.move(edge: .bottom))
                     }
                 }
             }
-
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+struct DataTableRepresentable: NSViewRepresentable {
+    @Environment(DatabaseManager.self) private var dbManager
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+
+        let tableView = NSTableView()
+        tableView.delegate = context.coordinator
+        tableView.dataSource = context.coordinator
+        tableView.headerView = NSTableHeaderView()
+        tableView.cornerView = nil
+        tableView.autoresizingMask = [.width, .height]
+        tableView.usesAlternatingRowBackgroundColors = true
+        tableView.gridStyleMask = [.solidVerticalGridLineMask, .solidHorizontalGridLineMask]
+        tableView.intercellSpacing = NSSize(width: 0, height: 0)
+        tableView.rowHeight = 28
+
+        scrollView.documentView = tableView
+        return scrollView
+    }
+
+    func updateNSView(_ nsView: NSScrollView, context: Context) {
+        let tableView = nsView.documentView as! NSTableView
+
+        let columnsChanged = context.coordinator.updateColumns(
+            for: tableView, columns: dbManager.columns)
+
+        if columnsChanged || context.coordinator.lastRowCount != dbManager.rows.count {
+            context.coordinator.lastRowCount = dbManager.rows.count
+            tableView.reloadData()
+        } else {
+            // Check if any visible rows need updating (simple approach: reload all for now)
+            tableView.reloadData()
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    @MainActor
+    class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
+        var parent: DataTableRepresentable
+        var columns: [String] = []
+        var lastRowCount: Int = 0
+
+        init(_ parent: DataTableRepresentable) {
+            self.parent = parent
+        }
+
+        func updateColumns(for tableView: NSTableView, columns: [String]) -> Bool {
+            guard self.columns != columns else { return false }
+            self.columns = columns
+
+            // Remove existing columns
+            while tableView.tableColumns.count > 0 {
+                tableView.removeTableColumn(tableView.tableColumns[0])
+            }
+
+            // Add new columns
+            for colName in columns {
+                let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(colName))
+                column.title = colName
+                column.width = 150
+                column.sortDescriptorPrototype = NSSortDescriptor(key: colName, ascending: true)
+                tableView.addTableColumn(column)
+            }
+            return true
+        }
+
+        func tableView(
+            _ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]
+        ) {
+            guard let sortDescriptor = tableView.sortDescriptors.first else { return }
+
+            parent.dbManager.sortColumn = sortDescriptor.key
+            parent.dbManager.sortAscending = sortDescriptor.ascending
+
+            Task {
+                if let tableName = parent.dbManager.selectedTableName {
+                    try? await parent.dbManager.fetchRows(for: tableName)
+                }
+            }
+        }
+
+        func numberOfRows(in tableView: NSTableView) -> Int {
+            parent.dbManager.rows.count
+        }
+
+        func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int)
+            -> NSView?
+        {
+            guard let identifier = tableColumn?.identifier.rawValue,
+                row < parent.dbManager.rows.count
+            else { return nil }
+
+            let dbRow = parent.dbManager.rows[row]
+            let value = dbRow.data[identifier] ?? ""
+
+            // Re-use or create view
+            let cellIdentifier = NSUserInterfaceItemIdentifier("DataCell")
+            var textField =
+                tableView.makeView(withIdentifier: cellIdentifier, owner: nil) as? NSTextField
+
+            if textField == nil {
+                textField = NSTextField()
+                textField?.identifier = cellIdentifier
+                textField?.delegate = self
+                textField?.isEditable = true
+                textField?.isSelectable = true
+                textField?.drawsBackground = false
+                textField?.isBordered = false
+                textField?.focusRingType = .none
+
+                // Add padding/inset if needed, but NSTextField is usually okay
+                // Let's set the alignment based on column type
+                let type = parent.dbManager.columnTypes[identifier]?.uppercased() ?? ""
+                if type.contains("INT") || type.contains("REAL") || type.contains("DOUBLE")
+                    || type.contains("FLOAT") || type.contains("DECIMAL")
+                    || type.contains("NUMERIC")
+                {
+                    textField?.alignment = .right
+                } else {
+                    textField?.alignment = .left
+                }
+
+                textField?.lineBreakMode = .byTruncatingTail
+            }
+
+            textField?.stringValue = value
+
+            // Handle highlighting
+            let hasPendingChange = parent.dbManager.pendingChanges[dbRow.id]?[identifier] != nil
+            let isActiveEdit = parent.dbManager.activeEdits[dbRow.id]?[identifier] != nil
+
+            if isActiveEdit {
+                textField?.backgroundColor = .systemBlue.withAlphaComponent(0.15)
+                textField?.drawsBackground = true
+            } else if hasPendingChange {
+                textField?.backgroundColor = .systemYellow.withAlphaComponent(0.1)
+                textField?.drawsBackground = true
+            } else {
+                textField?.drawsBackground = false
+            }
+
+            return textField
+        }
+
+        func controlTextDidChange(_ obj: Notification) {
+            guard let textField = obj.object as? NSTextField,
+                let tableView = textField.superview?.superview as? NSTableView
+            else { return }
+
+            let row = tableView.row(for: textField)
+            let column = tableView.column(for: textField)
+
+            guard row != -1, column != -1 else { return }
+
+            let colIdentifier = tableView.tableColumns[column].identifier.rawValue
+            let dbRow = parent.dbManager.rows[row]
+            let newValue = textField.stringValue
+
+            parent.dbManager.startEditing(
+                rowID: dbRow.id, column: colIdentifier,
+                currentValue: dbRow.data[colIdentifier] ?? "")
+            parent.dbManager.updateActiveEdit(
+                rowID: dbRow.id, column: colIdentifier, value: newValue)
+        }
+
+        func controlTextDidBeginEditing(_ obj: Notification) {
+            guard let textField = obj.object as? NSTextField,
+                let tableView = textField.superview?.superview as? NSTableView
+            else { return }
+
+            let row = tableView.row(for: textField)
+            let column = tableView.column(for: textField)
+
+            guard row != -1, column != -1 else { return }
+
+            let colIdentifier = tableView.tableColumns[column].identifier.rawValue
+            let dbRow = parent.dbManager.rows[row]
+
+            parent.dbManager.startEditing(
+                rowID: dbRow.id, column: colIdentifier,
+                currentValue: dbRow.data[colIdentifier] ?? "")
+        }
+
+        func controlTextDidEndEditing(_ obj: Notification) {
+            guard let textField = obj.object as? NSTextField,
+                let tableView = textField.superview?.superview as? NSTableView
+            else { return }
+
+            let row = tableView.row(for: textField)
+            let column = tableView.column(for: textField)
+
+            guard row != -1, column != -1 else { return }
+
+            let colIdentifier = tableView.tableColumns[column].identifier.rawValue
+            let dbRow = parent.dbManager.rows[row]
+            let newValue = textField.stringValue
+
+            parent.dbManager.startEditing(
+                rowID: dbRow.id, column: colIdentifier,
+                currentValue: dbRow.data[colIdentifier] ?? "")
+            parent.dbManager.updateActiveEdit(
+                rowID: dbRow.id, column: colIdentifier, value: newValue)
+        }
     }
 }
 
@@ -88,153 +281,5 @@ struct EditControlBar: View {
         .padding()
         .background(.ultraThinMaterial)
         .overlay(Divider(), alignment: .top)
-    }
-}
-
-struct HeaderView: View {
-    let columns: [String]
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ForEach(columns, id: \.self) { column in
-                Text(column)
-                    .font(.headline)
-                    .padding(8)
-                    .frame(width: 150, alignment: .leading)
-                    .background(Color(NSColor.windowBackgroundColor))
-                    .border(Color.secondary.opacity(0.2))
-            }
-            Spacer(minLength: 0)
-        }
-    }
-}
-
-struct RowView: View {
-    @Environment(DatabaseManager.self) private var dbManager
-    let row: DBRow
-    let columns: [String]
-    let isSelected: Bool
-
-    var body: some View {
-        let rowData = RowData(
-            row: row,
-            columns: columns,
-            isSelected: isSelected,
-            activeEdits: dbManager.activeEdits[row.id] ?? [:],
-            pendingChanges: dbManager.pendingChanges[row.id] ?? [:]
-        )
-        RowContentView(
-            data: rowData,
-            onStartEditing: { col, val in
-                dbManager.startEditing(rowID: row.id, column: col, currentValue: val)
-            },
-            onUpdateEdit: { col, val in
-                dbManager.updateActiveEdit(rowID: row.id, column: col, value: val)
-            }
-        )
-    }
-}
-
-struct RowData: Equatable {
-    let row: DBRow
-    let columns: [String]
-    let isSelected: Bool
-    let activeEdits: [String: String]
-    let pendingChanges: [String: String]
-}
-
-struct RowContentView: View, Equatable {
-    let data: RowData
-    let onStartEditing: (String, String) -> Void
-    let onUpdateEdit: (String, String) -> Void
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ForEach(data.columns, id: \.self) { column in
-                let cellData = CellData(
-                    rowID: data.row.id,
-                    column: column,
-                    initialValue: data.row.data[column] ?? "",
-                    activeEdit: data.activeEdits[column],
-                    pendingChange: data.pendingChanges[column]
-                )
-                CellView(
-                    data: cellData,
-                    onStartEditing: { val in onStartEditing(column, val) },
-                    onUpdateEdit: { val in onUpdateEdit(column, val) }
-                )
-            }
-            Spacer(minLength: 0)
-        }
-        .frame(height: 33)
-    }
-
-    nonisolated static func == (lhs: RowContentView, rhs: RowContentView) -> Bool {
-        lhs.data == rhs.data
-    }
-}
-
-struct CellData: Equatable {
-    let rowID: TableRowID
-    let column: String
-    let initialValue: String
-    let activeEdit: String?
-    let pendingChange: String?
-}
-
-struct CellView: View {
-    let data: CellData
-    let onStartEditing: (String) -> Void
-    let onUpdateEdit: (String) -> Void
-
-    var body: some View {
-        CellContentView(
-            data: data,
-            onStartEditing: onStartEditing,
-            onUpdateEdit: onUpdateEdit
-        )
-    }
-}
-
-struct CellContentView: View, Equatable {
-    let data: CellData
-    let onStartEditing: (String) -> Void
-    let onUpdateEdit: (String) -> Void
-
-    var body: some View {
-        ZStack(alignment: .leading) {
-            if let activeEdit = data.activeEdit {
-                TextField(
-                    "",
-                    text: Binding(
-                        get: { activeEdit },
-                        set: { onUpdateEdit($0) }
-                    )
-                )
-                .textFieldStyle(.plain)
-                .padding(8)
-                .frame(width: 150, alignment: .leading)
-                .background(Color.blue.opacity(0.1))
-            } else {
-                Text(displayValue)
-                    .lineLimit(1)
-                    .padding(8)
-                    .frame(width: 150, alignment: .leading)
-                    .background(data.pendingChange != nil ? Color.yellow.opacity(0.1) : Color.clear)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        onStartEditing(displayValue)
-                    }
-            }
-        }
-        .border(Color.secondary.opacity(0.1))
-    }
-
-    var displayValue: String {
-        data.pendingChange ?? data.initialValue
-    }
-
-    nonisolated static func == (lhs: CellContentView, rhs: CellContentView) -> Bool {
-        lhs.data == rhs.data
     }
 }

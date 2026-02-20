@@ -22,6 +22,7 @@ class DatabaseManager {
     var tableNames: [String] = []
     var selectedTableName: String?
     var columns: [String] = []
+    var columnTypes: [String: String] = [:]
     var primaryKeyColumns: [String] = []
     var rows: [DBRow] = []
 
@@ -61,6 +62,10 @@ class DatabaseManager {
 
     var filters: [FilterCriteria] = []
     var tableDDL: String = ""
+
+    // Sort State
+    var sortColumn: String? = nil
+    var sortAscending: Bool = true
 
     // Track loading state
     var isLoading: Bool = false
@@ -196,10 +201,11 @@ class DatabaseManager {
     private func fetchSchema(for tableName: String) async throws {
         guard let dbQueue = dbQueue else { return }
 
-        let (cols, pks, hasRowid) = try await dbQueue.read {
-            db -> ([String], [String], Bool) in
+        let (cols, types, pks, hasRowid) = try await dbQueue.read {
+            db -> ([String], [String: String], [String], Bool) in
             let columnsInfo = try db.columns(in: tableName)
             let cols = columnsInfo.map { $0.name }
+            let types = Dictionary(uniqueKeysWithValues: columnsInfo.map { ($0.name, $0.type) })
             let pks = columnsInfo.filter { $0.primaryKeyIndex > 0 }.map { $0.name }
 
             var hasRowid = false
@@ -209,9 +215,10 @@ class DatabaseManager {
                 hasRowid = true
             } catch {}
 
-            return (cols, pks, hasRowid)
+            return (cols, types, pks, hasRowid)
         }
         self.columns = cols
+        self.columnTypes = types
         self.primaryKeyColumns = pks
         self.tableHasRowid = hasRowid
         self.columnCache[tableName] = cols
@@ -247,6 +254,8 @@ class DatabaseManager {
         let columnsSnapshot = self.columns
         let pksSnapshot = self.primaryKeyColumns
         let hasRowidSnapshot = self.tableHasRowid
+        let sortColumnSnapshot = self.sortColumn
+        let sortAscendingSnapshot = self.sortAscending
 
         let (total, fetchedRows) = try await dbQueue.read { db -> (Int, [DBRow]) in
             // 1. Get Total Count
@@ -285,6 +294,11 @@ class DatabaseManager {
             if !whereClauses.isEmpty {
                 let whereString = whereClauses.joined(separator: " AND ")
                 sql += " WHERE \(whereString)"
+            }
+
+            if let sortCol = sortColumnSnapshot {
+                let direction = sortAscendingSnapshot ? "ASC" : "DESC"
+                sql += " ORDER BY \"\(sortCol)\" \(direction)"
             }
 
             sql += " LIMIT \(limitSnapshot) OFFSET \(offsetSnapshot)"

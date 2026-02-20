@@ -2,8 +2,8 @@
 
 ## Tech Stack
 - **Language**: Swift 6.
-- **UI Framework**: **SwiftUI**.
-    - *Rationale*: 100% native macOS experience. Provides the best performance, system integration (vibrancy, dark mode, system menus), and long-term maintainability for a Mac app.
+- **UI Framework**: **SwiftUI** with **AppKit** (where needed).
+    - *Rationale*: Unified SwiftUI architecture for navigation and state, but uses native `NSTableView` via `NSViewRepresentable` for high-performance data grids.
 - **Database Library**: **GRDB.swift**.
     - *Rationale*: A powerful and modern SQLite toolkit for Swift. It makes it easy to work with SQLite in a type-safe way and integrates well with SwiftUI's reactive state.
 - **Code Editor**: **CodeEditor**.
@@ -14,17 +14,19 @@
 ## Core Features
 1. **File Management**: Open existing `.sqlite`, `.db`, or `.sqlite3` files.
 2. **Schema Browser**: Sidebar showing tables.
-3. **Data Viewer**: Custom `Table` view implementation with lazy loading for high performance.
-4. **Data Editor**: Inline cell editing with transaction support and change tracking.
-5. **Filtering**: Column-based filtering with support for various operators (contains, equals, etc.).
+3. **Data Viewer**: Native `NSTableView` wrapper for high-performance data grids with robust column resizing and global sorting.
+4. **Data Editor**: Inline cell editing with transaction support and change tracking, implemented via `NSTextField` delegates for responsiveness.
+5. **Filtering**: Column-based filtering with support for various operators (contains, equals, etc.), performed server-side for performance.
 6. **SQL Editor**: SQL Console with syntax highlighting (via CodeEditor) and fuzzy-match autocomplete for keywords, tables, and columns.
 7. **File Metadata**: Displaying file name, location, size, and modification date in the sidebar.
+8. **Global Sorting**: Sort large datasets natively by tapping column headers, triggering SQL-based ordering.
 
-## Architecture & Performance
+## Architecture & Performance Rules
+- **Native Table Implementation**: **NEVER** use SwiftUI's native `Table` or large `LazyVStack` lists for the main data grid. They suffer from compiler timeouts and scrolling regressions with dynamic columns. Use `NSTableView` via `NSViewRepresentable`.
 - **Concurrency**: Use Swift `async/await` for all heavy database operations to keep the UI responsive.
-- **MainActor**: Ensure all UI updates happen on the main thread via `@MainActor` isolation.
-- **Reactive State**: Use `@Observable` (Observation framework) for clean state management in `DatabaseManager`.
-- **Background Processing**: Execute database reads/writes on background threads to avoid blocking the main run loop.
+- **MainActor**: All UI-facing properties in `DatabaseManager` must be `@MainActor` isolated.
+- **Server-Side Operations**: Always perform Sorting, Filtering, and Pagination via SQL in the database layer. Avoid processing large arrays in memory at the view layer.
+- **View Recycling**: Ensure `NSTableView` uses standard view-based re-use to minimize memory footprint.
 - **SQL Console Isolation**: The SQL Console is treated as a distinct mode, clearing table data and deselecting tables when active to prevent environment ambiguity.
 
 ## Implementation Roadmap
@@ -46,12 +48,14 @@
 - Inline cell editing using SwiftUI `TextField`.
 - State management for unsaved changes (Save/Discard) with `activeEdits` and `pendingChanges`.
 
-### Phase 4: Querying & Polish (Completed/In-Progress)
+### Phase 4: Querying & Polish (Completed)
 - [x] SQL console with syntax highlighting.
 - [x] Fuzzy-match autocomplete for SQL.
 - [x] Native macOS menu bar integration.
 - [x] SF Symbols integration for a native look.
 - [x] GitHub Actions for automated releases.
+- [x] **Performance Optimization**: Replaced SwiftUI Table with native `NSTableView`.
+- [x] **Global Sorting**: Implemented server-side ordering.
 
 ### Future Enhancements
 - Export query results to CSV/JSON/SQL statement
