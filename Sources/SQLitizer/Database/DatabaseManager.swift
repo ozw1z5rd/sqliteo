@@ -15,6 +15,12 @@ struct DBRow: Identifiable, Equatable {
     let data: [String: String]
 }
 
+struct ForeignKeyReference: Equatable {
+    let column: String
+    let destinationTable: String
+    let destinationColumn: String
+}
+
 @Observable
 @MainActor
 class DatabaseManager {
@@ -24,6 +30,7 @@ class DatabaseManager {
     var columns: [String] = []
     var columnTypes: [String: String] = [:]
     var primaryKeyColumns: [String] = []
+    var foreignKeys: [String: ForeignKeyReference] = [:]
     var rows: [DBRow] = []
 
     // Tracks local edits: [RowID: [ColumnName: NewValue]]
@@ -63,6 +70,9 @@ class DatabaseManager {
     var filters: [FilterCriteria] = []
     var tableDDL: String = ""
     var customSQL: String? = nil
+
+    // Highlighting State
+    var highlightedRowID: TableRowID? = nil
 
     // Sort State
     var sortColumn: String? = nil
@@ -166,14 +176,21 @@ class DatabaseManager {
         self.tableNames = tables
     }
 
-    func selectTable(_ tableName: String) async {
+    func selectTable(_ tableName: String, filter: FilterCriteria? = nil) async {
         self.selectedTableName = tableName
         self.customSQL = nil
         self.pendingChanges = [:]
-        self.filters = []
+
+        if let filter = filter {
+            self.filters = [filter]
+        } else {
+            self.filters = []
+        }
         self.offset = 0
         self.tableDDL = ""
         self.columns = []
+        self.primaryKeyColumns = []
+        self.foreignKeys = [:]
         self.rows = []
         self.totalRows = 0
         self.isLoading = true
@@ -192,6 +209,92 @@ class DatabaseManager {
         }
     }
 
+    func navigateAndHighlight(tableName: String, column: String, value: String) async {
+        self.selectedTableName = tableName
+        self.customSQL = nil
+        self.pendingChanges = [:]
+        self.filters = []
+        self.tableDDL = ""
+        self.columns = []
+        self.primaryKeyColumns = []
+        self.foreignKeys = [:]
+        self.rows = []
+        self.totalRows = 0
+        self.isLoading = true
+        self.errorMessage = nil
+        self.sortColumn = nil
+        self.sortAscending = true
+        self.highlightedRowID = nil
+        self.offset = 0
+
+        defer { self.isLoading = false }
+
+        do {
+            async let schemaTask: () = fetchSchema(for: tableName)
+            async let ddlTask: () = fetchTableDDL(for: tableName)
+            try await schemaTask
+            try await ddlTask
+
+            let hasRowidSnapshot = self.tableHasRowid
+            let pkSnapshot = self.primaryKeyColumns
+
+            if let dbQueue = dbQueue {
+                let offsetInfo = try await dbQueue.read { db -> (Int64?, Int) in
+                    var targetRowid: Int64? = nil
+                    var offset = 0
+                    if hasRowidSnapshot {
+                        let sql =
+                            "SELECT rowid FROM \"\(tableName)\" WHERE \"\(column)\" = ? LIMIT 1"
+                        if let rID = try Int64.fetchOne(db, sql: sql, arguments: [value]) {
+                            targetRowid = rID
+                            let countSql = "SELECT COUNT(*) FROM \"\(tableName)\" WHERE rowid < ?"
+                            offset =
+                                try Int.fetchOne(db, sql: countSql, arguments: [targetRowid]) ?? 0
+                        }
+                    } else if !pkSnapshot.isEmpty {
+                        // Fallback logic for without rowid is strictly querying the offset manually
+                        let pkList = pkSnapshot.map { "\"\($0)\"" }.joined(
+                            separator: ", ")
+                        let fetchSql =
+                            "SELECT \(pkList) FROM \"\(tableName)\" WHERE \"\(column)\" = ? LIMIT 1"
+                        if let firstRowMatch = try Row.fetchOne(
+                            db, sql: fetchSql, arguments: [value])
+                        {
+                            // Find position among ALL ordered by first PK
+                            let firstPk = pkSnapshot[0]
+                            if let pkVal = firstRowMatch[firstPk] as? DatabaseValue {
+                                let offsetSql =
+                                    "SELECT COUNT(*) FROM \"\(tableName)\" WHERE \"\(firstPk)\" < ?"
+                                offset =
+                                    try Int.fetchOne(db, sql: offsetSql, arguments: [pkVal]) ?? 0
+                            }
+                        }
+                    }
+                    return (targetRowid, offset)
+                }
+
+                if let targetRowid = offsetInfo.0 {
+                    self.highlightedRowID = .rowid(targetRowid)
+                }
+
+                let pageOffset = (offsetInfo.1 / self.limit) * self.limit
+                self.offset = pageOffset
+            }
+
+            try await fetchRows(for: tableName)
+
+            // If highlightedRowID isn't set yet (e.g. no rowid table), try to find it in fetched rows
+            if self.highlightedRowID == nil {
+                if let matchRow = self.rows.first(where: { $0.data[column] == value }) {
+                    self.highlightedRowID = matchRow.id
+                }
+            }
+
+        } catch {
+            self.errorMessage = "Error loading table data: \(error.localizedDescription)"
+        }
+    }
+
     func clearDataForSQLConsole() {
         self.selectedTableName = nil
         self.customSQL = nil
@@ -203,6 +306,7 @@ class DatabaseManager {
         self.filters = []
         self.tableDDL = ""
         self.primaryKeyColumns = []
+        self.foreignKeys = [:]
     }
 
     private func fetchTableDDL(for tableName: String) async throws {
@@ -218,8 +322,8 @@ class DatabaseManager {
     private func fetchSchema(for tableName: String) async throws {
         guard let dbQueue = dbQueue else { return }
 
-        let (cols, types, pks, hasRowid) = try await dbQueue.read {
-            db -> ([String], [String: String], [String], Bool) in
+        let (cols, types, pks, hasRowid, fks) = try await dbQueue.read {
+            db -> ([String], [String: String], [String], Bool, [String: ForeignKeyReference]) in
             let columnsInfo = try db.columns(in: tableName)
             let cols = columnsInfo.map { $0.name }
             let types = Dictionary(uniqueKeysWithValues: columnsInfo.map { ($0.name, $0.type) })
@@ -232,12 +336,27 @@ class DatabaseManager {
                 hasRowid = true
             } catch {}
 
-            return (cols, types, pks, hasRowid)
+            var fks: [String: ForeignKeyReference] = [:]
+            do {
+                let rows = try Row.fetchAll(db, sql: "PRAGMA foreign_key_list(\"\(tableName)\")")
+                for row in rows {
+                    if let table = row["table"] as? String,
+                        let from = row["from"] as? String,
+                        let to = row["to"] as? String
+                    {
+                        fks[from] = ForeignKeyReference(
+                            column: from, destinationTable: table, destinationColumn: to)
+                    }
+                }
+            } catch {}
+
+            return (cols, types, pks, hasRowid, fks)
         }
         self.columns = cols
         self.columnTypes = types
         self.primaryKeyColumns = pks
         self.tableHasRowid = hasRowid
+        self.foreignKeys = fks
         self.columnCache[tableName] = cols
     }
 
@@ -564,6 +683,60 @@ class DatabaseManager {
                     await self.connect(to: url)
                 }
             }
+        }
+    }
+
+    func fetchSurroundingRows(for fk: ForeignKeyReference, value: String) async throws -> [DBRow] {
+        guard let dbQueue = dbQueue else { return [] }
+
+        return try await dbQueue.read { db in
+            var results: [DBRow] = []
+
+            let columnsInfo = try? db.columns(in: fk.destinationTable)
+            let cols = columnsInfo?.map { $0.name } ?? []
+            if cols.isEmpty { return [] }
+
+            func mapToDBRow(_ row: GRDB.Row) -> DBRow {
+                var dict: [String: String] = [:]
+                for col in cols {
+                    if let val = row[col] {
+                        dict[col] = "\(val)"
+                    }
+                }
+                return DBRow(id: .uuid(UUID()), data: dict)
+            }
+
+            let targetSql =
+                "SELECT * FROM \"\(fk.destinationTable)\" WHERE \"\(fk.destinationColumn)\" = ? LIMIT 1"
+            if let targetRow = try Row.fetchOne(db, sql: targetSql, arguments: [value]) {
+                let sqlBefore = """
+                    SELECT * FROM \"\(fk.destinationTable)\"
+                    WHERE \"\(fk.destinationColumn)\" < ?
+                    ORDER BY \"\(fk.destinationColumn)\" DESC LIMIT 3
+                    """
+                let beforeRows = try Row.fetchAll(db, sql: sqlBefore, arguments: [value]).map(
+                    mapToDBRow
+                ).reversed()
+
+                let mappedTarget = mapToDBRow(targetRow)
+
+                let sqlAfter = """
+                    SELECT * FROM \"\(fk.destinationTable)\"
+                    WHERE \"\(fk.destinationColumn)\" > ?
+                    ORDER BY \"\(fk.destinationColumn)\" ASC LIMIT 3
+                    """
+                let afterRows = try Row.fetchAll(db, sql: sqlAfter, arguments: [value]).map(
+                    mapToDBRow)
+
+                results.append(contentsOf: beforeRows)
+                results.append(mappedTarget)
+                results.append(contentsOf: afterRows)
+            } else {
+                // Not found, try querying random 7 or what we can
+                let sqlAny = "SELECT * FROM \"\(fk.destinationTable)\" LIMIT 7"
+                results = try Row.fetchAll(db, sql: sqlAny).map(mapToDBRow)
+            }
+            return results
         }
     }
 }

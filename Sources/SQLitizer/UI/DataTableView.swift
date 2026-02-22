@@ -78,6 +78,18 @@ struct DataTableRepresentable: NSViewRepresentable {
             // Check if any visible rows need updating (simple approach: reload all for now)
             tableView.reloadData()
         }
+
+        if let highlightId = dbManager.highlightedRowID,
+            highlightId != context.coordinator.lastHighlightedRowID
+        {
+            context.coordinator.lastHighlightedRowID = highlightId
+            if let index = dbManager.rows.firstIndex(where: { $0.id == highlightId }) {
+                tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+                tableView.scrollRowToVisible(index)
+            }
+        } else if dbManager.highlightedRowID == nil {
+            context.coordinator.lastHighlightedRowID = nil
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -89,6 +101,7 @@ struct DataTableRepresentable: NSViewRepresentable {
         var parent: DataTableRepresentable
         var columns: [String] = []
         var lastRowCount: Int = 0
+        var lastHighlightedRowID: TableRowID? = nil
 
         init(_ parent: DataTableRepresentable) {
             self.parent = parent
@@ -152,6 +165,11 @@ struct DataTableRepresentable: NSViewRepresentable {
                 cellView = NSTableCellView()
                 cellView?.identifier = cellIdentifier
 
+                let stack = NSStackView()
+                stack.orientation = .horizontal
+                stack.spacing = 4
+                stack.translatesAutoresizingMaskIntoConstraints = false
+
                 let textField = NSTextField()
                 textField.identifier = NSUserInterfaceItemIdentifier("TextField")
                 textField.delegate = self
@@ -160,25 +178,47 @@ struct DataTableRepresentable: NSViewRepresentable {
                 textField.drawsBackground = false
                 textField.isBordered = false
                 textField.focusRingType = .none
-                textField.translatesAutoresizingMaskIntoConstraints = false
 
-                cellView?.addSubview(textField)
+                let fkButton = NSButton()
+                fkButton.identifier = NSUserInterfaceItemIdentifier("FKButton")
+                fkButton.image = NSImage(
+                    systemSymbolName: "key.fill", accessibilityDescription: "Foreign Key")
+                fkButton.isBordered = false
+                fkButton.imagePosition = .imageOnly
+                fkButton.target = self
+                fkButton.action = #selector(fkButtonClicked(_:))
+                fkButton.controlSize = .small
+                fkButton.contentTintColor = .tertiaryLabelColor
+                fkButton.isHidden = true
+
+                stack.addArrangedSubview(textField)
+                stack.addArrangedSubview(fkButton)
+
+                cellView?.addSubview(stack)
                 cellView?.textField = textField
 
                 if let cell = cellView {
                     NSLayoutConstraint.activate([
-                        textField.leadingAnchor.constraint(
+                        stack.leadingAnchor.constraint(
                             equalTo: cell.leadingAnchor, constant: 4),
-                        textField.trailingAnchor.constraint(
+                        stack.trailingAnchor.constraint(
                             equalTo: cell.trailingAnchor, constant: -4),
-                        textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                        stack.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
                     ])
+                    fkButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+                    textField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
                 }
 
                 textField.lineBreakMode = .byTruncatingTail
             }
 
             guard let textField = cellView?.textField else { return cellView }
+
+            if let stack = cellView?.subviews.first as? NSStackView,
+                let fkButton = stack.arrangedSubviews.last as? NSButton
+            {
+                fkButton.isHidden = (parent.dbManager.foreignKeys[identifier] == nil)
+            }
 
             textField.stringValue = value
 
@@ -253,6 +293,58 @@ struct DataTableRepresentable: NSViewRepresentable {
 
             parent.dbManager.updateActiveEdit(
                 rowID: dbRow.id, column: colIdentifier, value: newValue)
+        }
+
+        @objc func fkButtonClicked(_ sender: NSButton) {
+            guard let cellView = sender.superview?.superview as? NSTableCellView,
+                let tableView = cellView.superview?.superview as? NSTableView
+            else { return }
+
+            let row = tableView.row(for: cellView)
+            let column = tableView.column(for: cellView)
+            guard row != -1, column != -1 else { return }
+
+            let colIdentifier = tableView.tableColumns[column].identifier.rawValue
+            let dbRow = parent.dbManager.rows[row]
+            let value = dbRow.data[colIdentifier] ?? ""
+
+            if let fk = parent.dbManager.foreignKeys[colIdentifier] {
+                Task { @MainActor in
+                    do {
+                        let rows = try await parent.dbManager.fetchSurroundingRows(
+                            for: fk, value: value)
+                        let targetRow = rows.first(where: { $0.data[fk.destinationColumn] == value }
+                        )
+                        let targetRowID = targetRow?.id
+
+                        let allCols = rows.first?.data.keys.sorted() ?? []
+
+                        let popover = NSPopover()
+                        let popoverView = FKPreviewPopover(
+                            tableName: fk.destinationTable,
+                            rows: rows,
+                            columns: allCols,
+                            targetRowID: targetRowID,
+                            onNavigate: { [weak self] in
+                                guard let self = self else { return }
+                                popover.performClose(nil)
+                                Task { @MainActor in
+                                    await self.parent.dbManager.navigateAndHighlight(
+                                        tableName: fk.destinationTable,
+                                        column: fk.destinationColumn,
+                                        value: value
+                                    )
+                                }
+                            }
+                        )
+                        popover.contentViewController = NSHostingController(rootView: popoverView)
+                        popover.behavior = .transient
+                        popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
+                    } catch {
+                        print("Error fetching FK rows: \(error)")
+                    }
+                }
+            }
         }
     }
 }
