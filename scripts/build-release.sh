@@ -12,6 +12,9 @@ mkdir -p SQLitizer.app/Contents/MacOS
 mkdir -p SQLitizer.app/Contents/Resources
 cp .build/release/SQLitizer SQLitizer.app/Contents/MacOS/SQLitizer
 
+echo "Copying resource bundles..."
+cp -R .build/release/*.bundle SQLitizer.app/Contents/Resources/
+
 # Generate Info.plist dynamically
 cat << EOF > SQLitizer.app/Contents/Info.plist
 <?xml version="1.0" encoding="UTF-8"?>
