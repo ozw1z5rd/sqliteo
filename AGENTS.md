@@ -63,5 +63,5 @@
 - Drag-and-drop table names into SQL query (from sidebar)
 - Clickable foreign key values for navigation
 - Version check and update notifications (check GitHub releases)
-- Tabs for multiple ad-hoc sql queries
 - Package signing
+- JSON Detail modal to show whole JSON structure. Include copy button to copy JSON to clipboard.
