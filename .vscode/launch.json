@@ -4,37 +4,37 @@
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:sqlitizer}",
-            "name": "Debug SQLitizer",
-            "target": "SQLitizer",
+            "cwd": "${workspaceFolder:sqliteo}",
+            "name": "Debug sqliteo",
+            "target": "sqliteo",
             "configuration": "debug",
-            "preLaunchTask": "swift: Build Debug SQLitizer"
+            "preLaunchTask": "swift: Build Debug sqliteo"
         },
         {
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:sqlitizer}",
-            "name": "Release SQLitizer",
-            "target": "SQLitizer",
+            "cwd": "${workspaceFolder:sqliteo}",
+            "name": "Release sqliteo",
+            "target": "sqliteo",
             "configuration": "release",
-            "preLaunchTask": "swift: Build Release SQLitizer"
+            "preLaunchTask": "swift: Build Release sqliteo"
         },
         {
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:sqlitizer}",
-            "name": "Debug SQLiteo",
-            "target": "SQLiteo",
+            "cwd": "${workspaceFolder:sqliteo}",
+            "name": "Debug sqliteo",
+            "target": "sqliteo",
             "configuration": "debug",
-            "preLaunchTask": "swift: Build Debug SQLiteo"
+            "preLaunchTask": "swift: Build Debug sqliteo"
         },
         {
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:sqlitizer}",
+            "cwd": "${workspaceFolder:sqliteo}",
             "name": "Release SQLiteo",
             "target": "SQLiteo",
             "configuration": "release",
