@@ -14,6 +14,20 @@ SQLiteo is a native macOS SQLite browser built with Swift and absolute precision
 * 💨 **Lazy (but Fast) Loading:** Data pagination is built-in. Whether you have 10 rows or 10,000, your Mac won't break a sweat.
 * 💅 **Native & Snappy:** No Electron here. This is pure, unadulterated Swift.
 
+<table>
+  <tr>
+    <td><a href="https://github.com/adamghill/sqliteo/blob/main/img/main.png?raw=true"><img src="https://github.com/adamghill/sqliteo/blob/main/img/main.png?raw=true" width="400" alt="Main Window"></a></td>
+    <td><a href="https://github.com/adamghill/sqliteo/blob/main/img/table-data.png?raw=true"><img src="https://github.com/adamghill/sqliteo/blob/main/img/table-data.png?raw=true" width="400" alt="Table Data"></a></td>
+  </tr>
+  <tr>
+    <td><a href="https://github.com/adamghill/sqliteo/blob/main/img/foreign-key-peek.png?raw=true"><img src="https://github.com/adamghill/sqliteo/blob/main/img/foreign-key-peek.png?raw=true" width="400" alt="Foreign Key Peek"></a></td>
+    <td><a href="https://github.com/adamghill/sqliteo/blob/main/img/filters.png?raw=true"><img src="https://github.com/adamghill/sqliteo/blob/main/img/filters.png?raw=true" width="400" alt="Filters"></a></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><a href="https://github.com/adamghill/sqliteo/blob/main/img/sql-editor.png?raw=true"><img src="https://github.com/adamghill/sqliteo/blob/main/img/sql-editor.png?raw=true" width="400" alt="SQL Editor"></a></td>
+  </tr>
+</table>
+
 ## 🛠️ Getting Started
 
 1. Download the latest `.zip` from the [Releases](https://github.com/adamghill/sqliteo/releases) page.
