@@ -5,30 +5,10 @@
             "request": "launch",
             "args": [],
             "cwd": "${workspaceFolder:sqliteo}",
-            "name": "Debug sqliteo",
-            "target": "sqliteo",
+            "name": "Debug SQLiteo",
+            "target": "SQLiteo",
             "configuration": "debug",
-            "preLaunchTask": "swift: Build Debug sqliteo"
-        },
-        {
-            "type": "swift",
-            "request": "launch",
-            "args": [],
-            "cwd": "${workspaceFolder:sqliteo}",
-            "name": "Release sqliteo",
-            "target": "sqliteo",
-            "configuration": "release",
-            "preLaunchTask": "swift: Build Release sqliteo"
-        },
-        {
-            "type": "swift",
-            "request": "launch",
-            "args": [],
-            "cwd": "${workspaceFolder:sqliteo}",
-            "name": "Debug sqliteo",
-            "target": "sqliteo",
-            "configuration": "debug",
-            "preLaunchTask": "swift: Build Debug sqliteo"
+            "preLaunchTask": "swift: Build Debug SQLiteo"
         },
         {
             "type": "swift",

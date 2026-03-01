@@ -1,8 +1,8 @@
-# SQLite Tools Deep Dive: Feature Recommendations for SQLitizer
+# SQLite Tools Deep Dive: Feature Recommendations for SQLiteo
 
-This report details potential features for SQLitizer based on a competitive analysis of modern SQLite editors (TablePlus, Beekeeper Studio, DB Browser for SQLite, DBeaver, and SQLiteStudio). 
+This report details potential features for SQLiteo based on a competitive analysis of modern SQLite editors (TablePlus, Beekeeper Studio, DB Browser for SQLite, DBeaver, and SQLiteStudio). 
 
-Features are ranked by **Helpfulness** (impact on user workflow) and evaluated for **Implementation Difficulty** based on the current SQLitizer architecture (SwiftUI + GRDB).
+Features are ranked by **Helpfulness** (impact on user workflow) and evaluated for **Implementation Difficulty** based on the current SQLiteo architecture (SwiftUI + GRDB).
 
 ---
 
@@ -55,9 +55,9 @@ Features are ranked by **Helpfulness** (impact on user workflow) and evaluated f
 **OSS Reference:** **SQLiteStudio** (GPL) has a plugin for comparing databases.
 
 ## 8. SQLCipher Support (Encrypted Databases)
-**Benefit:** Allows SQLitizer to open `.db` files used by secure apps (like Signal or many mobile apps) that use encryption.
+**Benefit:** Allows SQLiteo to open `.db` files used by secure apps (like Signal or many mobile apps) that use encryption.
 **Implementation Difficulty:** **Medium**.
-- SQLitizer uses **GRDB**. GRDB supports SQLCipher, but it requires linking the SQLCipher library instead of the standard SQLite library at build time.
+- SQLiteo uses **GRDB**. GRDB supports SQLCipher, but it requires linking the SQLCipher library instead of the standard SQLite library at build time.
 **OSS Reference:** **DB Browser for SQLite** (GPL) has dedicated UI for entering/saving passwords for encrypted databases.
 
 ## 9. Explicit Transaction Management

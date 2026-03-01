@@ -1,4 +1,4 @@
-# SQLitizer Project Decisions
+# SQLiteo Project Decisions
 
 ## Tech Stack
 - **Language**: Swift 6.

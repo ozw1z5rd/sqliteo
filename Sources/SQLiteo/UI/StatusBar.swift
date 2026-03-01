@@ -1,5 +1,6 @@
 import SwiftUI
 
+@MainActor
 struct StatusBar: View {
     @Environment(DatabaseManager.self) private var dbManager
     @Binding var selectedTab: Tab

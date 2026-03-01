@@ -1,56 +1,51 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION=${1:-"1.0.0"}
+APP_NAME="SQLiteo"
+SCHEME_NAME="SQLiteo"
 
-echo "Building release mode for version $VERSION..."
-swift build -c release
-
-echo "Packaging SQLiteo.app..."
-rm -rf SQLiteo.app
-mkdir -p SQLiteo.app/Contents/MacOS
-mkdir -p SQLiteo.app/Contents/Resources
-cp .build/release/SQLiteo SQLiteo.app/Contents/MacOS/SQLiteo
-
-echo "Copying resource bundles..."
-cp -R .build/release/*.bundle SQLiteo.app/Contents/Resources/
-
-# Generate Info.plist dynamically
-cat << EOF > SQLiteo.app/Contents/Info.plist
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key>
-    <string>SQLiteo</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.adamghill.sqliteo</string>
-    <key>CFBundleName</key>
-    <string>SQLiteo</string>
-    <key>CFBundleVersion</key>
-    <string>$VERSION</string>
-    <key>CFBundleShortVersionString</key>
-    <string>$VERSION</string>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-</dict>
-</plist>
-EOF
-
-if [ -f "AppIcon.icns" ]; then
-    cp AppIcon.icns SQLiteo.app/Contents/Resources/AppIcon.icns
-else
-    echo "Warning: AppIcon.icns not found! Run 'just generate-icon' first if you need it."
+# -- Setup --
+VERSION=${1:-""}
+if [ -z "$VERSION" ]; then
+    VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "1.0.0")
 fi
 
-echo "Signing application ad-hoc..."
-codesign --force --deep -s - SQLiteo.app
+echo "Building ${APP_NAME} version ${VERSION}..."
 
-echo "Creating zip archive with ditto..."
-ditto -c -k --keepParent SQLiteo.app SQLiteo-macOS.zip
+# 1. Generate Xcode Project
+echo "Generating Xcode project with XcodeGen..."
+xcodegen generate
 
-echo "Successfully created SQLiteo-macOS.zip!"
+# 2. Archive the project
+echo "Archiving project..."
+rm -rf .build-archive
+xcodebuild archive \
+    -project "${APP_NAME}.xcodeproj" \
+    -scheme "${SCHEME_NAME}" \
+    -configuration Release \
+    -destination 'platform=macOS' \
+    -archivePath ".build-archive/${APP_NAME}.xcarchive" \
+    MARKETING_VERSION="${VERSION}" \
+    CURRENT_PROJECT_VERSION="${VERSION}"
+
+# 3. Extract .app from archive
+echo "Extracting .app from archive..."
+rm -rf .build-export
+mkdir -p .build-export
+cp -R ".build-archive/${APP_NAME}.xcarchive/Products/Applications/${APP_NAME}.app" ".build-export/"
+
+APP_PATH=".build-export/${APP_NAME}.app"
+
+# 4. Ad-hoc signing (without --deep to preserve entitlements)
+echo "Ad-hoc signing nested bundles..."
+find "${APP_PATH}/Contents" \
+    \( -name '*.framework' -o -name '*.dylib' -o -name '*.bundle' \) -print0 2>/dev/null | \
+xargs -0 -I {} codesign --force -s - {} || true
+echo "Ad-hoc signing main app with entitlements..."
+codesign --force -s - --entitlements Sources/SQLiteo/SQLiteo.entitlements "${APP_PATH}"
+
+# 5. Create distribution DMG
+echo "Creating DMG..."
+hdiutil create -volname "${APP_NAME}" -srcfolder "${APP_PATH}" -ov -format UDZO "${APP_NAME}-macOS.dmg"
+
+echo "Success! Created ${APP_NAME}-macOS.dmg"

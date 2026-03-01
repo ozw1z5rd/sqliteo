@@ -1,4 +1,5 @@
 .build/
+.build-xcode/
 .swiftpm/
 .DS_Store
 DerivedData/
@@ -6,3 +7,5 @@ DerivedData/
 *~
 SQLiteo-*
 SQLiteo.app/*
+.build-export/
+.build*

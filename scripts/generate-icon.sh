@@ -1,24 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# This script generates the Apple Icon Image format (.icns) from AppIcon.png
-# It uses built-in macOS tools (sips and iconutil) to create the various resolutions required.
-
 ICON_SRC="AppIcon.png"
-ICON_SET="AppIcon.iconset"
-ICON_DEST="AppIcon.icns"
+ASSETS_DIR="Sources/SQLiteo/Assets.xcassets"
+ICON_SET="${ASSETS_DIR}/AppIcon.appiconset"
 
 if [ ! -f "$ICON_SRC" ]; then
     echo "Error: $ICON_SRC not found."
     exit 1
 fi
 
-echo "Converting $ICON_SRC to $ICON_DEST..."
+echo "Populating Asset Catalog $ICON_SET from $ICON_SRC..."
 
-# Create the temporary iconset directory
 mkdir -p "$ICON_SET"
 
-# Generate all required resolutions using sips
 sips -z 16 16     "$ICON_SRC" --out "$ICON_SET/icon_16x16.png" > /dev/null
 sips -z 32 32     "$ICON_SRC" --out "$ICON_SET/icon_16x16@2x.png" > /dev/null
 sips -z 32 32     "$ICON_SRC" --out "$ICON_SET/icon_32x32.png" > /dev/null
@@ -30,10 +25,23 @@ sips -z 512 512   "$ICON_SRC" --out "$ICON_SET/icon_256x256@2x.png" > /dev/null
 sips -z 512 512   "$ICON_SRC" --out "$ICON_SET/icon_512x512.png" > /dev/null
 sips -z 1024 1024 "$ICON_SRC" --out "$ICON_SET/icon_512x512@2x.png" > /dev/null
 
-# Compile the iconset into the final .icns file
-iconutil -c icns "$ICON_SET" -o "$ICON_DEST"
+cat << 'EOF' > "$ICON_SET/Contents.json"
+{
+  "images": [
+    { "size": "16x16",   "idiom": "mac", "filename": "icon_16x16.png",       "scale": "1x" },
+    { "size": "16x16",   "idiom": "mac", "filename": "icon_16x16@2x.png",    "scale": "2x" },
+    { "size": "32x32",   "idiom": "mac", "filename": "icon_32x32.png",       "scale": "1x" },
+    { "size": "32x32",   "idiom": "mac", "filename": "icon_32x32@2x.png",    "scale": "2x" },
+    { "size": "128x128", "idiom": "mac", "filename": "icon_128x128.png",     "scale": "1x" },
+    { "size": "128x128", "idiom": "mac", "filename": "icon_128x128@2x.png",  "scale": "2x" },
+    { "size": "256x256", "idiom": "mac", "filename": "icon_256x256.png",     "scale": "1x" },
+    { "size": "256x256", "idiom": "mac", "filename": "icon_256x256@2x.png",  "scale": "2x" },
+    { "size": "512x512", "idiom": "mac", "filename": "icon_512x512.png",     "scale": "1x" },
+    { "size": "512x512", "idiom": "mac", "filename": "icon_512x512@2x.png",  "scale": "2x" }
+  ],
+  "info": { "author": "xcode", "version": 1 }
+}
+EOF
 
-# Clean up
-rm -rf "$ICON_SET"
+echo "Successfully populated $ICON_SET!"
 
-echo "Successfully created $ICON_DEST!"

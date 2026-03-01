@@ -1,6 +1,6 @@
-# Suggestions for a Snappier SQLitizer UI
+# Suggestions for a Snappier SQLiteo UI
 
-To make SQLitizer the "snappiest" SQLite editor, we need to minimize main-thread work and avoid redundant UI updates. Below are five ranked suggestions to optimize performance.
+To make SQLiteo the "snappiest" SQLite editor, we need to minimize main-thread work and avoid redundant UI updates. Below are five ranked suggestions to optimize performance.
 
 ---
 

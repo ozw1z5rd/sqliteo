@@ -7,6 +7,7 @@ enum Tab: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+@MainActor
 struct ContentView: View {
     @Environment(DatabaseManager.self) private var dbManager
     @Environment(SQLQueryStore.self) private var queryStore
