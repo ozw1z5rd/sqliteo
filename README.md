@@ -31,7 +31,7 @@ SQLiteo is a native macOS SQLite browser built with Swift and absolute precision
 
 ## 🛠️ Getting Started
 
-1. Download the latest `.zip` from the [Releases](https://github.com/adamghill/sqliteo/releases) page.
+1. Download the latest `.dmg` from the [Releases](https://github.com/adamghill/sqliteo/releases) page.
 2. Drag `SQLiteo.app` to your Applications folder.
 3. Start queryin'.
 

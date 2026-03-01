@@ -3,9 +3,9 @@ options:
   bundleIdPrefix: com.adamghill
 
 packages:
-  CodeEditor:
-    url: https://github.com/ZeeZide/CodeEditor.git
-    from: 1.0.0
+  CodeEditorView:
+    url: https://github.com/mchakravarty/CodeEditorView.git
+    from: 0.14.0
   GRDB.swift:
     url: https://github.com/groue/GRDB.swift.git
     from: 6.29.3
@@ -31,6 +31,9 @@ targets:
       ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
       ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
     dependencies:
-      - package: CodeEditor
+      - package: CodeEditorView
+        product: CodeEditorView
+      - package: CodeEditorView
+        product: LanguageSupport
       - package: GRDB.swift
         product: GRDB

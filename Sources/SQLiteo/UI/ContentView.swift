@@ -1,5 +1,52 @@
-import CodeEditor
+@preconcurrency import CodeEditorView
+import LanguageSupport
 import SwiftUI
+
+nonisolated(unsafe) private let safeDefaultDark = Theme(
+    colourScheme: .dark,
+    fontName: "SFMono-Medium",
+    fontSize: 13.0,
+    textColour: NSColor(red: 0.87, green: 0.87, blue: 0.88, alpha: 1.0),
+    commentColour: NSColor(red: 0.51, green: 0.55, blue: 0.59, alpha: 1.0),
+    stringColour: NSColor(red: 0.94, green: 0.53, blue: 0.46, alpha: 1.0),
+    characterColour: NSColor(red: 0.84, green: 0.79, blue: 0.53, alpha: 1.0),
+    numberColour: NSColor(red: 0.81, green: 0.74, blue: 0.40, alpha: 1.0),
+    identifierColour: NSColor(red: 0.41, green: 0.72, blue: 0.64, alpha: 1.0),
+    operatorColour: NSColor(red: 0.62, green: 0.94, blue: 0.87, alpha: 1.0),
+    keywordColour: NSColor(red: 0.94, green: 0.51, blue: 0.69, alpha: 1.0),
+    symbolColour: NSColor(red: 0.72, green: 0.72, blue: 0.73, alpha: 1.0),
+    typeColour: NSColor(red: 0.36, green: 0.85, blue: 1.0, alpha: 1.0),
+    fieldColour: NSColor(red: 0.63, green: 0.40, blue: 0.90, alpha: 1.0),
+    caseColour: NSColor(red: 0.82, green: 0.66, blue: 1.0, alpha: 1.0),
+    backgroundColour: NSColor(red: 0.16, green: 0.16, blue: 0.18, alpha: 1.0),
+    currentLineColour: NSColor(red: 0.19, green: 0.20, blue: 0.22, alpha: 1.0),
+    selectionColour: NSColor(red: 0.40, green: 0.44, blue: 0.51, alpha: 1.0),
+    cursorColour: NSColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0),
+    invisiblesColour: NSColor(red: 0.33, green: 0.37, blue: 0.42, alpha: 1.0)
+)
+
+nonisolated(unsafe) private let safeDefaultLight = Theme(
+    colourScheme: .light,
+    fontName: "SFMono-Medium",
+    fontSize: 13.0,
+    textColour: NSColor(red: 0.15, green: 0.15, blue: 0.15, alpha: 1.0),
+    commentColour: NSColor(red: 0.45, green: 0.50, blue: 0.55, alpha: 1.0),
+    stringColour: NSColor(red: 0.76, green: 0.24, blue: 0.16, alpha: 1.0),
+    characterColour: NSColor(red: 0.14, green: 0.19, blue: 0.81, alpha: 1.0),
+    numberColour: NSColor(red: 0.0, green: 0.05, blue: 1.0, alpha: 1.0),
+    identifierColour: NSColor(red: 0.23, green: 0.50, blue: 0.54, alpha: 1.0),
+    operatorColour: NSColor(red: 0.18, green: 0.05, blue: 0.43, alpha: 1.0),
+    keywordColour: NSColor(red: 0.63, green: 0.28, blue: 0.62, alpha: 1.0),
+    symbolColour: NSColor(red: 0.24, green: 0.13, blue: 0.48, alpha: 1.0),
+    typeColour: NSColor(red: 0.04, green: 0.29, blue: 0.46, alpha: 1.0),
+    fieldColour: NSColor(red: 0.36, green: 0.15, blue: 0.60, alpha: 1.0),
+    caseColour: NSColor(red: 0.18, green: 0.05, blue: 0.43, alpha: 1.0),
+    backgroundColour: NSColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0),
+    currentLineColour: NSColor(red: 0.93, green: 0.96, blue: 1.0, alpha: 1.0),
+    selectionColour: NSColor(red: 0.73, green: 0.84, blue: 0.99, alpha: 1.0),
+    cursorColour: NSColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 1.0),
+    invisiblesColour: NSColor(red: 0.84, green: 0.84, blue: 0.84, alpha: 1.0)
+)
 
 enum Tab: String, CaseIterable, Identifiable {
     case data = "Data"
@@ -20,13 +67,19 @@ struct ContentView: View {
     @State private var showSuggestions = false
     @State private var currentWord = ""
     @State private var debounceTask: Task<Void, Never>?
+    @State private var isCyclingAutocomplete = false
+    @State private var autocompleteCycleIndex = 0
+    @State private var ignoreNextSQLChange = false
+    @State private var lastInsertedSuggestionLength = 0
 
     // Inline rename state
     @State private var editingQueryID: UUID?
     @State private var editingQueryName: String = ""
 
     // Editor & Sidebar UI State
-    @State private var sqlSelection = "".startIndex..<"".endIndex
+    @State private var editorPosition = CodeEditor.Position()
+    @State private var editorMessages: Set<TextLocated<Message>> = []
+    @Environment(\.colorScheme) private var colorScheme
     @AppStorage("sqlQueriesHeight") private var savedSqlQueriesHeight: Double = 150
     @State private var activeSqlQueriesHeight: Double? = nil
     @State private var dragStartHeight: Double? = nil
@@ -178,10 +231,8 @@ struct ContentView: View {
                 }
             }
             .onChange(of: queryStore.selectedQueryID) { _, newID in
-                // Reset sqlSelection when changing queries to prevent out-of-bounds crashes
-                // in CodeEditor if the new query's string is shorter than the old query's Selection.
-                let empty = ""
-                sqlSelection = empty.startIndex..<empty.endIndex
+                // Reset editor position when changing queries
+                editorPosition = CodeEditor.Position()
             }
             .onChange(of: dbManager.fileURL) { _, newURL in
                 if let url = newURL {
@@ -202,20 +253,48 @@ struct ContentView: View {
                 VStack(spacing: 0) {
                     ZStack(alignment: .bottomLeading) {
                         CodeEditor(
-                            source: selectedQuerySQL, selection: $sqlSelection, language: .sql
+                            text: selectedQuerySQL,
+                            position: $editorPosition,
+                            messages: $editorMessages,
+                            language: .sqlite()
+                        )
+                        .environment(
+                            \.codeEditorTheme,
+                            colorScheme == .dark ? safeDefaultDark : safeDefaultLight
+                        )
+                        .environment(
+                            \.codeEditorLayoutConfiguration,
+                            CodeEditor.LayoutConfiguration(showMinimap: false, wrapText: true)
                         )
                         .frame(height: max(60, sqlEditorHeight))
-                        .padding(4)
                         .background(Color(NSColor.textBackgroundColor))
-                        // Disable updates to this view while dragging the divider
-                        .allowsHitTesting(!isDraggingEditorDivider)
                         .onChange(of: queryStore.selectedQuery?.sql) { _, newValue in
+                            if ignoreNextSQLChange {
+                                ignoreNextSQLChange = false
+                                return
+                            }
+                            isCyclingAutocomplete = false
                             debounceTask?.cancel()
                             debounceTask = Task {
                                 try? await Task.sleep(nanoseconds: 150_000_000)
                                 guard !Task.isCancelled else { return }
                                 await updateSuggestions(for: newValue ?? "")
                             }
+                        }
+                        .onKeyPress(.return, phases: .down) { press in
+                            if isCyclingAutocomplete {
+                                isCyclingAutocomplete = false
+                                showSuggestions = false
+
+                                // Move cursor to the end of the word (deselect)
+                                if let first = editorPosition.selections.first {
+                                    editorPosition.selections = [
+                                        NSRange(location: first.upperBound, length: 0)
+                                    ]
+                                }
+                                return .handled
+                            }
+                            return .ignored
                         }
                         .onKeyPress(.space, phases: .down) { press in
                             if press.modifiers.contains(.control) {
@@ -227,14 +306,9 @@ struct ContentView: View {
                             }
                             return .ignored
                         }
-                        .onKeyPress(.return, phases: .down) { press in
-                            if press.modifiers.contains(.command) {
-                                let range = query.rangeToExecute(withSelection: sqlSelection)
-                                sqlSelection = range
-                                let text = String(query.sql[range])
-                                Task {
-                                    await dbManager.executeCustomSQL(text)
-                                }
+                        .onKeyPress(.tab, phases: .down) { press in
+                            if showSuggestions && !suggestions.isEmpty {
+                                cycleSuggestion()
                                 return .handled
                             }
                             return .ignored
@@ -243,7 +317,8 @@ struct ContentView: View {
                         if showSuggestions && !suggestions.isEmpty {
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 8) {
-                                    ForEach(suggestions, id: \.self) { suggestion in
+                                    ForEach(Array(suggestions.enumerated()), id: \.element) {
+                                        index, suggestion in
                                         Button {
                                             insertSuggestion(suggestion)
                                         } label: {
@@ -251,7 +326,18 @@ struct ContentView: View {
                                                 .font(.caption)
                                                 .padding(.horizontal, 8)
                                                 .padding(.vertical, 4)
-                                                .background(Color.accentColor.opacity(0.2))
+                                                .background(
+                                                    isCyclingAutocomplete
+                                                        && index == autocompleteCycleIndex
+                                                        ? Color.accentColor
+                                                        : Color.accentColor.opacity(0.2)
+                                                )
+                                                .foregroundColor(
+                                                    isCyclingAutocomplete
+                                                        && index == autocompleteCycleIndex
+                                                        ? Color.white
+                                                        : .primary
+                                                )
                                                 .cornerRadius(4)
                                         }
                                         .buttonStyle(.plain)
@@ -270,9 +356,7 @@ struct ContentView: View {
 
                     HStack {
                         Button {
-                            let range = query.rangeToExecute(withSelection: sqlSelection)
-                            sqlSelection = range
-                            let text = String(query.sql[range])
+                            let text = textToExecute(for: query)
                             Task {
                                 await dbManager.executeCustomSQL(text)
                             }
@@ -557,7 +641,9 @@ struct ContentView: View {
             }
         }
 
-        let allMatches = Array(Set(keywordMatches + tableMatches + columnMatches)).sorted()
+        let allMatches = Array(Set(keywordMatches + tableMatches + columnMatches))
+            .filter { $0.caseInsensitiveCompare(wordToMatch) != .orderedSame }
+            .sorted()
 
         suggestions = allMatches
         showSuggestions = !suggestions.isEmpty
@@ -568,25 +654,83 @@ struct ContentView: View {
             var sql = queryStore.selectedQuery?.sql
         else { return }
 
-        if currentWord.isEmpty {
-            sql += suggestion + " "
+        let charactersToDrop =
+            isCyclingAutocomplete ? lastInsertedSuggestionLength : currentWord.count
+
+        let prefix: String
+        if currentWord.contains(".") {
+            let parts = currentWord.components(separatedBy: ".")
+            prefix = (parts.first ?? "") + "."
         } else {
-            if currentWord.contains(".") {
-                let parts = currentWord.components(separatedBy: ".")
-                let prefix = parts.first ?? ""
-                sql = String(sql.dropLast(currentWord.count)) + "\(prefix).\(suggestion) "
-            } else {
-                sql = String(sql.dropLast(currentWord.count)) + "\(suggestion) "
-            }
+            prefix = ""
         }
 
+        if currentWord.isEmpty && !isCyclingAutocomplete {
+            sql += suggestion + " "
+        } else {
+            sql = String(sql.dropLast(charactersToDrop)) + "\(prefix)\(suggestion) "
+        }
+
+        isCyclingAutocomplete = false
         queryStore.updateSQL(id: queryID, sql: sql)
         currentWord = ""
         showSuggestions = false
     }
 
+    private func cycleSuggestion() {
+        guard let queryID = queryStore.selectedQueryID,
+            var sql = queryStore.selectedQuery?.sql
+        else { return }
+
+        let charactersToDrop: Int
+        if !isCyclingAutocomplete {
+            isCyclingAutocomplete = true
+            autocompleteCycleIndex = 0
+            charactersToDrop = currentWord.count
+        } else {
+            autocompleteCycleIndex = (autocompleteCycleIndex + 1) % suggestions.count
+            charactersToDrop = lastInsertedSuggestionLength
+        }
+
+        let suggestion = suggestions[autocompleteCycleIndex]
+
+        let prefix: String
+        if currentWord.contains(".") {
+            let parts = currentWord.components(separatedBy: ".")
+            prefix = (parts.first ?? "") + "."
+        } else {
+            prefix = ""
+        }
+
+        let textToInsert = prefix + suggestion
+        sql = String(sql.dropLast(charactersToDrop)) + textToInsert
+        lastInsertedSuggestionLength = textToInsert.count
+
+        ignoreNextSQLChange = true
+        queryStore.updateSQL(id: queryID, sql: sql)
+
+        // Highlight the autocompleted portion (the part that wasn't successfully typed by the user yet)
+        let highlightLength = max(0, textToInsert.utf16.count - currentWord.utf16.count)
+        let highlightLocation = sql.utf16.count - highlightLength
+        editorPosition.selections = [
+            NSRange(location: max(0, highlightLocation), length: highlightLength)
+        ]
+    }
+
     private func textToExecute(for query: SQLQuery) -> String {
-        let range = query.rangeToExecute(withSelection: sqlSelection)
-        return String(query.sql[range])
+        let sql = query.sql
+
+        // CodeEditorView uses NSRange-based positions — no String.Index issues
+        let nsRange = editorPosition.selections.first ?? NSRange(location: 0, length: 0)
+
+        // Convert NSRange to Range<String.Index> for query.sql
+        guard let range = Range(nsRange, in: sql) else {
+            // Fallback: use cursor at start
+            let startRange = sql.startIndex..<sql.startIndex
+            return String(sql[query.rangeToExecute(withSelection: startRange)])
+        }
+
+        let result = query.rangeToExecute(withSelection: range)
+        return String(sql[result])
     }
 }

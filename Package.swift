@@ -11,14 +11,15 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "6.29.3"),
-        .package(url: "https://github.com/ZeeZide/CodeEditor.git", from: "1.0.0"),
+        .package(url: "https://github.com/mchakravarty/CodeEditorView.git", from: "0.14.0"),
     ],
     targets: [
         .executableTarget(
             name: "SQLiteo",
             dependencies: [
                 .product(name: "GRDB", package: "GRDB.swift"),
-                .product(name: "CodeEditor", package: "CodeEditor"),
+                .product(name: "CodeEditorView", package: "CodeEditorView"),
+                .product(name: "LanguageSupport", package: "CodeEditorView"),
             ],
             exclude: ["Info.plist"],
             resources: [

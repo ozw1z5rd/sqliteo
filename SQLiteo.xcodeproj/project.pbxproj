@@ -12,13 +12,14 @@
 		21817A3220632FAB3049A934 /* AboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1ACD79BF5AFD5EA3D52EF98 /* AboutView.swift */; };
 		2B29CAD521C57BF595FB35DD /* String+FuzzyMatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23841C75052DB5EEC0A1E6E0 /* String+FuzzyMatch.swift */; };
 		32B5289FFBACB56DCBAC0725 /* DataTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87ECA46672D3E90AC9C0E84A /* DataTableView.swift */; };
-		58AE46DBF925A20DFB8F6F50 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 88C65461547A6CE77E3F56A6 /* GRDB */; };
+		58AE46DBF925A20DFB8F6F50 /* LanguageSupport in Frameworks */ = {isa = PBXBuildFile; productRef = BF819E06D6E7E7561054C335 /* LanguageSupport */; };
 		712EBDEEA304014718B1E527 /* SQLQueryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D6CD586C8465E4029E783AE /* SQLQueryStore.swift */; };
 		8DC57F816A593336762A4FD7 /* FKPreviewPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3480C2F4B3CF52810F1B8E45 /* FKPreviewPopover.swift */; };
 		8EB09946954F30E0BD3690BF /* DatabaseManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A066E6D573FEF371B12FB01B /* DatabaseManager.swift */; };
-		AE77270545CCD7DF28D2429B /* CodeEditor in Frameworks */ = {isa = PBXBuildFile; productRef = 978A49AB9D3B468D6C677924 /* CodeEditor */; };
+		AE77270545CCD7DF28D2429B /* CodeEditorView in Frameworks */ = {isa = PBXBuildFile; productRef = FAED3AB363BE1569C29D430E /* CodeEditorView */; };
 		BF4012FEFCCACF7B5B829F22 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8057EB5A1CB62412A19C3161 /* ContentView.swift */; };
 		F63010F2026AFEE50D23BCDB /* StatusBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4B4B70323BD418C224679A4 /* StatusBar.swift */; };
+		F75399C8CDAE8C673FA8E168 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 88C65461547A6CE77E3F56A6 /* GRDB */; };
 		F7C2012A615D85362E9C41CF /* FilterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DF4F9DCA4C529556D3834AB /* FilterView.swift */; };
 /* End PBXBuildFile section */
 
@@ -44,8 +45,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				AE77270545CCD7DF28D2429B /* CodeEditor in Frameworks */,
-				58AE46DBF925A20DFB8F6F50 /* GRDB in Frameworks */,
+				AE77270545CCD7DF28D2429B /* CodeEditorView in Frameworks */,
+				58AE46DBF925A20DFB8F6F50 /* LanguageSupport in Frameworks */,
+				F75399C8CDAE8C673FA8E168 /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -130,7 +132,8 @@
 			);
 			name = SQLiteo;
 			packageProductDependencies = (
-				978A49AB9D3B468D6C677924 /* CodeEditor */,
+				FAED3AB363BE1569C29D430E /* CodeEditorView */,
+				BF819E06D6E7E7561054C335 /* LanguageSupport */,
 				88C65461547A6CE77E3F56A6 /* GRDB */,
 			);
 			productName = SQLiteo;
@@ -162,7 +165,7 @@
 			mainGroup = 98ECB3DD7A508F271B340FD2;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				9457E5336229653E75E4DD31 /* XCRemoteSwiftPackageReference "CodeEditor" */,
+				DE723A492E838281CC9BE915 /* XCRemoteSwiftPackageReference "CodeEditorView" */,
 				B0B4BFB37316418DC081E5F9 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -393,20 +396,20 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		9457E5336229653E75E4DD31 /* XCRemoteSwiftPackageReference "CodeEditor" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/ZeeZide/CodeEditor.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 1.0.0;
-			};
-		};
 		B0B4BFB37316418DC081E5F9 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/groue/GRDB.swift.git";
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 6.29.3;
+			};
+		};
+		DE723A492E838281CC9BE915 /* XCRemoteSwiftPackageReference "CodeEditorView" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/mchakravarty/CodeEditorView.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.14.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
@@ -417,10 +420,15 @@
 			package = B0B4BFB37316418DC081E5F9 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
 			productName = GRDB;
 		};
-		978A49AB9D3B468D6C677924 /* CodeEditor */ = {
+		BF819E06D6E7E7561054C335 /* LanguageSupport */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 9457E5336229653E75E4DD31 /* XCRemoteSwiftPackageReference "CodeEditor" */;
-			productName = CodeEditor;
+			package = DE723A492E838281CC9BE915 /* XCRemoteSwiftPackageReference "CodeEditorView" */;
+			productName = LanguageSupport;
+		};
+		FAED3AB363BE1569C29D430E /* CodeEditorView */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = DE723A492E838281CC9BE915 /* XCRemoteSwiftPackageReference "CodeEditorView" */;
+			productName = CodeEditorView;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

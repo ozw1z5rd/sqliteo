@@ -10,6 +10,15 @@ struct SQLQuery: Identifiable, Equatable {
     var isPersisted: Bool
 
     func rangeToExecute(withSelection selection: Range<String.Index>) -> Range<String.Index> {
+        // Guard against stale indices from a different string
+        guard selection.lowerBound >= sql.startIndex,
+            selection.lowerBound <= sql.endIndex,
+            selection.upperBound >= sql.startIndex,
+            selection.upperBound <= sql.endIndex
+        else {
+            return sql.startIndex..<sql.endIndex
+        }
+
         if selection.lowerBound != selection.upperBound,
             selection.lowerBound >= sql.startIndex,
             selection.upperBound <= sql.endIndex
