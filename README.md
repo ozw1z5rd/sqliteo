@@ -24,8 +24,8 @@ SQLiteo is a native macOS SQLite browser built with Swift and absolute precision
     <td><a href="https://github.com/adamghill/sqliteo/blob/main/img/filters.png?raw=true"><img src="https://github.com/adamghill/sqliteo/blob/main/img/filters.png?raw=true" width="400" alt="Filters"></a></td>
   </tr>
   <tr>
-    <td colspan="2" align="center"><a href="https://github.com/adamghill/sqliteo/blob/main/img/schema.png?raw=true"><img src="https://github.com/adamghill/sqliteo/blob/main/img/schema.png?raw=true" width="400" alt="Schema"></a></td>
-    <td colspan="2" align="center"><a href="https://github.com/adamghill/sqliteo/blob/main/img/sql-editor.png?raw=true"><img src="https://github.com/adamghill/sqliteo/blob/main/img/sql-editor.png?raw=true" width="400" alt="SQL Editor"></a></td>
+    <td><a href="https://github.com/adamghill/sqliteo/blob/main/img/schema.png?raw=true"><img src="https://github.com/adamghill/sqliteo/blob/main/img/schema.png?raw=true" width="400" alt="Schema"></a></td>
+    <td><a href="https://github.com/adamghill/sqliteo/blob/main/img/sql-editor.png?raw=true"><img src="https://github.com/adamghill/sqliteo/blob/main/img/sql-editor.png?raw=true" width="400" alt="SQL Editor"></a></td>
   </tr>
 </table>
 
