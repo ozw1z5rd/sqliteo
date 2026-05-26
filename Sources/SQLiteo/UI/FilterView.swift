@@ -1,16 +1,17 @@
 import SwiftUI
 
 struct FilterView: View {
-    @Environment(DatabaseManager.self) private var dbManager
+    @EnvironmentObject private var dbManager: DatabaseManager
 
     var body: some View {
-        @Bindable var dbManager = dbManager
-
         VStack(alignment: .leading, spacing: 8) {
-            ForEach($dbManager.filters) { $filter in
+            ForEach(dbManager.filters.indices, id: \.self) { index in
                 HStack {
                     if !dbManager.columns.isEmpty {
-                        Picker("Column", selection: $filter.column) {
+                        Picker("Column", selection: Binding(
+                            get: { dbManager.filters[index].column },
+                            set: { dbManager.filters[index].column = $0 }
+                        )) {
                             ForEach(dbManager.columns, id: \.self) { column in
                                 Text(column).tag(column)
                             }
@@ -19,7 +20,10 @@ struct FilterView: View {
                         .frame(width: 150)
                     }
 
-                    Picker("Operator", selection: $filter.operatorType) {
+                    Picker("Operator", selection: Binding(
+                        get: { dbManager.filters[index].operatorType },
+                        set: { dbManager.filters[index].operatorType = $0 }
+                    )) {
                         ForEach(DatabaseManager.FilterOperator.allCases) { op in
                             Text(op.rawValue).tag(op)
                         }
@@ -27,12 +31,16 @@ struct FilterView: View {
                     .labelsHidden()
                     .frame(width: 120)
 
-                    TextField("Value", text: $filter.value)
+                    TextField("Value", text: Binding(
+                        get: { dbManager.filters[index].value },
+                        set: { dbManager.filters[index].value = $0 }
+                    ))
                         .textFieldStyle(.roundedBorder)
 
                     Button {
-                        if let index = dbManager.filters.firstIndex(where: { $0.id == filter.id }) {
-                            dbManager.filters.remove(at: index)
+                        let id = dbManager.filters[index].id
+                        if let idx = dbManager.filters.firstIndex(where: { $0.id == id }) {
+                            dbManager.filters.remove(at: idx)
                         }
                     } label: {
                         Image(systemName: "minus.circle.fill")

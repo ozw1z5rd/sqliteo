@@ -1,6 +1,5 @@
 import CryptoKit
 import Foundation
-import Observation
 
 struct SQLQuery: Identifiable, Equatable {
     let id: UUID
@@ -63,13 +62,12 @@ struct SQLQuery: Identifiable, Equatable {
     }
 }
 
-@Observable
 @MainActor
-class SQLQueryStore {
-    var queries: [SQLQuery] = []
-    var selectedQueryID: UUID?
+class SQLQueryStore: ObservableObject {
+    @Published var queries: [SQLQuery] = []
+    @Published var selectedQueryID: UUID?
 
-    @ObservationIgnored private var queriesDirectory: URL?
+    private var queriesDirectory: URL?
 
     var selectedQuery: SQLQuery? {
         guard let id = selectedQueryID else { return nil }

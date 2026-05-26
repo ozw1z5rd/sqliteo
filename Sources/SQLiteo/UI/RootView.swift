@@ -1,13 +1,14 @@
 import SwiftUI
 
+@MainActor
 struct RootView: View {
     @State private var dbManager = DatabaseManager()
     @State private var queryStore = SQLQueryStore()
 
     var body: some View {
         ContentView()
-            .environment(dbManager)
-            .environment(queryStore)
+            .environmentObject(dbManager)
+            .environmentObject(queryStore)
             .onOpenURL { url in
                 Task {
                     await dbManager.connect(to: url)

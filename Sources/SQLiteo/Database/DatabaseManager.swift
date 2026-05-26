@@ -1,7 +1,6 @@
 import AppKit
 import Foundation
 import GRDB
-import Observation
 import UniformTypeIdentifiers
 
 enum TableRowID: Hashable, Equatable {
@@ -21,26 +20,25 @@ struct ForeignKeyReference: Equatable {
     let destinationColumn: String
 }
 
-@Observable
 @MainActor
-class DatabaseManager {
+class DatabaseManager: ObservableObject {
     var dbQueue: DatabaseQueue?
-    var tableNames: [String] = []
-    var selectedTableName: String?
-    var columns: [String] = []
-    var columnTypes: [String: String] = [:]
-    var primaryKeyColumns: [String] = []
-    var foreignKeys: [String: ForeignKeyReference] = [:]
-    var rows: [DBRow] = []
+    @Published var tableNames: [String] = []
+    @Published var selectedTableName: String?
+    @Published var columns: [String] = []
+    @Published var columnTypes: [String: String] = [:]
+    @Published var primaryKeyColumns: [String] = []
+    @Published var foreignKeys: [String: ForeignKeyReference] = [:]
+    @Published var rows: [DBRow] = []
 
     // Tracks local edits: [RowID: [ColumnName: NewValue]]
-    var pendingChanges: [TableRowID: [String: String]] = [:]
+    @Published var pendingChanges: [TableRowID: [String: String]] = [:]
 
     // Pagination and Filtering
-    var totalRows: Int = 0
-    var offset: Int = 0
-    var limit: Int = 1000
-    var dataUpdateCounter: Int = 0
+    @Published var totalRows: Int = 0
+    @Published var offset: Int = 0
+    @Published var limit: Int = 1000
+    @Published var dataUpdateCounter: Int = 0
 
     struct FilterCriteria: Identifiable, Codable {
         var id = UUID()
@@ -68,24 +66,24 @@ class DatabaseManager {
         }
     }
 
-    var filters: [FilterCriteria] = []
-    var tableDDL: String = ""
-    var customSQL: String? = nil
+    @Published var filters: [FilterCriteria] = []
+    @Published var tableDDL: String = ""
+    @Published var customSQL: String? = nil
 
     // Highlighting State
-    var highlightedRowID: TableRowID? = nil
+    @Published var highlightedRowID: TableRowID? = nil
 
     // Sort State
-    var sortColumn: String? = nil
-    var sortAscending: Bool = true
+    @Published var sortColumn: String? = nil
+    @Published var sortAscending: Bool = true
 
     // Track loading state
-    var isLoading: Bool = false
-    var errorMessage: String? = nil
+    @Published var isLoading: Bool = false
+    @Published var errorMessage: String? = nil
 
     // Cached per-table metadata (not observed by views)
-    @ObservationIgnored var tableHasRowid: Bool = true
-    @ObservationIgnored private var columnCache: [String: [String]] = [:]
+    var tableHasRowid: Bool = true
+    private var columnCache: [String: [String]] = [:]
 
     struct TableSchema {
         let columns: [String]
@@ -94,17 +92,17 @@ class DatabaseManager {
         let hasRowid: Bool
         let foreignKeys: [String: ForeignKeyReference]
     }
-    @ObservationIgnored private var schemaCache: [String: TableSchema] = [:]
-    @ObservationIgnored var prefetchTask: Task<Void, Never>?
+    private var schemaCache: [String: TableSchema] = [:]
+    var prefetchTask: Task<Void, Never>?
 
     // File Metadata
-    var fileURL: URL?
-    var fileSize: Int64 = 0
-    var creationDate: Date?
-    var modificationDate: Date?
+    @Published var fileURL: URL?
+    @Published var fileSize: Int64 = 0
+    @Published var creationDate: Date?
+    @Published var modificationDate: Date?
 
     // Tracks current editing state before it is committed to pendingChanges
-    var activeEdits: [TableRowID: [String: String]] = [:]
+    @Published var activeEdits: [TableRowID: [String: String]] = [:]
 
     var hasChanges: Bool {
         !pendingChanges.isEmpty

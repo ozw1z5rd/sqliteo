@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 struct DataTableView: View {
-    @Environment(DatabaseManager.self) private var dbManager
+    @EnvironmentObject private var dbManager: DatabaseManager
 
     var body: some View {
         VStack(spacing: 0) {
@@ -16,6 +16,7 @@ struct DataTableView: View {
 
             if dbManager.columns.isEmpty {
                 VStack {
+                    
                     Spacer()
                     Text("No data to display")
                         .foregroundColor(.secondary)
@@ -39,7 +40,7 @@ struct DataTableView: View {
 }
 
 struct DataTableRepresentable: NSViewRepresentable {
-    @Environment(DatabaseManager.self) private var dbManager
+    @EnvironmentObject private var dbManager: DatabaseManager
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
@@ -242,6 +243,7 @@ struct DataTableRepresentable: NSViewRepresentable {
                 textField.drawsBackground = false
                 textField.isBordered = false
                 textField.focusRingType = .none
+                textField.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
 
                 let fkButton = NSButton()
                 fkButton.identifier = NSUserInterfaceItemIdentifier("FKButton")
@@ -414,7 +416,7 @@ struct DataTableRepresentable: NSViewRepresentable {
 }
 
 struct EditControlBar: View {
-    @Environment(DatabaseManager.self) private var dbManager
+    @EnvironmentObject private var dbManager: DatabaseManager
 
     var body: some View {
         HStack {

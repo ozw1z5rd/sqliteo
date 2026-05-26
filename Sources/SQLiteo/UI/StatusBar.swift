@@ -2,7 +2,7 @@ import SwiftUI
 
 @MainActor
 struct StatusBar: View {
-    @Environment(DatabaseManager.self) private var dbManager
+    @EnvironmentObject private var dbManager: DatabaseManager
     @Binding var selectedTab: Tab
     var showTabs: Bool = true
 
@@ -97,7 +97,7 @@ struct FileMetadataView: View {
 }
 
 struct SchemaView: View {
-    @Environment(DatabaseManager.self) private var dbManager
+    @EnvironmentObject private var dbManager: DatabaseManager
 
     var body: some View {
         ScrollView {
