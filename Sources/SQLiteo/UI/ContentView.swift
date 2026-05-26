@@ -1,6 +1,7 @@
 import CodeEditorView
 import LanguageSupport
 import SwiftUI
+import AppKit
 
 private struct CustomTheme {
     static let dark = Theme(
@@ -82,6 +83,9 @@ struct ContentView: View {
     @State private var activeSqlEditorHeight: Double? = nil
     @State private var editorDragStartHeight: Double? = nil
     @State private var isDraggingEditorDivider = false
+
+    // Event monitor for Cmd+Return query execution
+    @State private var queryEventMonitor: Any? = nil
 
     private var sqlQueriesHeight: Double {
         activeSqlQueriesHeight ?? savedSqlQueriesHeight
@@ -317,6 +321,23 @@ struct ContentView: View {
         }
         .navigationTitle(query.name)
         .overlay(LoadingOverlay(isLoading: dbManager.isLoading))
+        .onAppear {
+            queryEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                if event.keyCode == 36 && event.modifierFlags.contains(.command) {
+                    guard let q = queryStore.selectedQuery else { return event }
+                    let text = textToExecute(for: q)
+                    dbManager.runQuery(text)
+                    return nil
+                }
+                return event
+            }
+        }
+        .onDisappear {
+            if let monitor = queryEventMonitor {
+                NSEvent.removeMonitor(monitor)
+                queryEventMonitor = nil
+            }
+        }
     }
 
     private var suggestionBar: some View {
@@ -383,14 +404,22 @@ struct ContentView: View {
             HStack {
                 Button {
                     let text = textToExecute(for: query)
-                    Task {
-                        await dbManager.executeCustomSQL(text)
-                    }
+                    dbManager.runQuery(text)
                 } label: {
                     Label("Run Query", systemImage: "play.fill")
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.return, modifiers: .command)
+
+                if dbManager.isLoading {
+                    Button {
+                        dbManager.cancelQuery()
+                    } label: {
+                        Label("Cancel", systemImage: "stop.circle.fill")
+                    }
+                    .buttonStyle(.bordered)
+                }
+
                 Spacer()
             }
             .padding(8)

@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct SQLiteoApp: App {
     @Environment(\.openWindow) private var openWindow
     @FocusedValue(\.databaseManager) var dbManager
+    @StateObject private var recentFiles = RecentFilesManager.shared
 
     init() {
     }
@@ -35,6 +36,11 @@ struct SQLiteoApp: App {
 
             CommandGroup(after: .newItem) {
                 RefreshCommand()
+            }
+
+            CommandGroup(after: .newItem) {
+                OpenRecentMenu(dbManager: dbManager)
+                    .environmentObject(recentFiles)
             }
 
             CommandGroup(replacing: .appInfo) {
@@ -76,5 +82,44 @@ private struct RefreshCommand: View {
         }
         .keyboardShortcut("r", modifiers: .command)
         .disabled(dbManager?.fileURL == nil)
+    }
+}
+
+private struct OpenRecentMenu: View {
+    var dbManager: DatabaseManager?
+    @EnvironmentObject private var recentFiles: RecentFilesManager
+
+    var body: some View {
+        Menu("Open Recent") {
+            if recentFiles.recentURLs.isEmpty {
+                Text("No Recent Files")
+                    .disabled(true)
+            } else {
+                ForEach(recentFiles.recentURLs, id: \.self) { url in
+                    Button(url.lastPathComponent) {
+                        openRecentFile(url)
+                    }
+                }
+
+                Divider()
+
+                Button("Clear Menu") {
+                    recentFiles.clear()
+                }
+            }
+        }
+        .disabled(recentFiles.recentURLs.isEmpty)
+    }
+
+    private func openRecentFile(_ url: URL) {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+
+        if let dbManager, dbManager.fileURL == nil {
+            Task {
+                await dbManager.connect(to: url)
+            }
+        } else {
+            NSWorkspace.shared.open(url)
+        }
     }
 }

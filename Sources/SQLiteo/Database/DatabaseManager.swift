@@ -79,6 +79,21 @@ class DatabaseManager: ObservableObject {
 
     // Track loading state
     @Published var isLoading: Bool = false
+
+    // Query cancellation
+    private var currentQueryTask: Task<Void, Never>?
+
+    func runQuery(_ sql: String, resetOffset: Bool = true) {
+        currentQueryTask?.cancel()
+        currentQueryTask = Task { [weak self] in
+            await self?.executeCustomSQL(sql, resetOffset: resetOffset)
+        }
+    }
+
+    func cancelQuery() {
+        currentQueryTask?.cancel()
+        dbQueue?.interrupt()
+    }
     @Published var errorMessage: String? = nil
 
     // Cached per-table metadata (not observed by views)
@@ -156,6 +171,8 @@ class DatabaseManager: ObservableObject {
 
         do {
             self.fileURL = url
+            RecentFilesManager.shared.add(url)
+
             let attr = try FileManager.default.attributesOfItem(atPath: url.path)
             self.fileSize = attr[.size] as? Int64 ?? 0
             self.creationDate = attr[.creationDate] as? Date
@@ -626,6 +643,10 @@ class DatabaseManager: ObservableObject {
             self.primaryKeyColumns = []
             self.dataUpdateCounter += 1
         } catch {
+            if let dbError = error as? GRDB.DatabaseError, dbError.resultCode == .SQLITE_INTERRUPT {
+                return
+            }
+            if Task.isCancelled { return }
             self.errorMessage = "Error executing SQL: \(error.localizedDescription)"
         }
     }
