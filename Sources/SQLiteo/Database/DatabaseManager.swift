@@ -110,6 +110,9 @@ class DatabaseManager: ObservableObject {
     private var schemaCache: [String: TableSchema] = [:]
     var prefetchTask: Task<Void, Never>?
 
+    // Used to pass a file URL to a new window
+    static var pendingFileURL: URL?
+
     // File Metadata
     @Published var fileURL: URL?
     @Published var fileSize: Int64 = 0
@@ -791,6 +794,72 @@ class DatabaseManager: ObservableObject {
             }
             return results
         }
+    }
+
+    func fetchAllRowsForExport() async throws -> (columns: [String], rows: [[String: String]]) {
+        guard let dbQueue = dbQueue else { return ([], []) }
+
+        if let tableName = selectedTableName {
+            let filtersSnapshot = self.filters
+            let sortColumnSnapshot = self.sortColumn
+            let sortAscendingSnapshot = self.sortAscending
+            let columnsSnapshot = self.columns
+
+            return try await dbQueue.read { db in
+                var sql = "SELECT * FROM \"\(tableName)\""
+                var arguments: StatementArguments = []
+                var whereArgs: [DatabaseValueConvertible] = []
+
+                var whereClauses: [String] = []
+                for filter in filtersSnapshot {
+                    let sqlOp = filter.operatorType.sqlOperator
+                    whereClauses.append("\"\(filter.column)\" \(sqlOp) ?")
+                    var value = filter.value
+                    switch filter.operatorType {
+                    case .contains: value = "%\(value)%"
+                    case .startsWith: value = "\(value)%"
+                    case .endsWith: value = "%\(value)"
+                    default: break
+                    }
+                    whereArgs.append(value)
+                }
+                if !whereClauses.isEmpty {
+                    sql += " WHERE " + whereClauses.joined(separator: " AND ")
+                    arguments = StatementArguments(whereArgs)
+                }
+                if let sortCol = sortColumnSnapshot {
+                    sql += " ORDER BY \"\(sortCol)\" \(sortAscendingSnapshot ? "ASC" : "DESC")"
+                }
+
+                let rows = try Row.fetchAll(db, sql: sql, arguments: arguments)
+                let mapped = rows.map { row in
+                    var dict: [String: String] = [:]
+                    for column in columnsSnapshot {
+                        if let val = row[column] { dict[column] = "\(val)" }
+                    }
+                    return dict
+                }
+                return (columnsSnapshot, mapped)
+            }
+        } else if let customSQL = customSQL {
+            let cleanSQL = customSQL.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedSQL = cleanSQL.hasSuffix(";") ? String(cleanSQL.dropLast()) : cleanSQL
+
+            return try await dbQueue.read { [trimmedSQL] db in
+                let statement = try db.makeStatement(sql: trimmedSQL)
+                let cols = Array(statement.columnNames)
+                let rows = try Row.fetchAll(statement)
+                let mapped = rows.map { row in
+                    var dict: [String: String] = [:]
+                    for column in cols {
+                        if let val = row[column] { dict[column] = "\(val)" }
+                    }
+                    return dict
+                }
+                return (cols, mapped)
+            }
+        }
+        return ([], [])
     }
 
     func refreshDatabase() async {

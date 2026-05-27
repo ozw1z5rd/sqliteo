@@ -15,6 +15,14 @@ struct RootView: View {
                 }
             }
             .focusedSceneValue(\.databaseManager, dbManager)
+            .onAppear {
+                if let url = DatabaseManager.pendingFileURL {
+                    DatabaseManager.pendingFileURL = nil
+                    Task {
+                        await dbManager.connect(to: url)
+                    }
+                }
+            }
     }
 }
 

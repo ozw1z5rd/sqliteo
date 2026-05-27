@@ -51,6 +51,7 @@ enum Tab: String, CaseIterable, Identifiable {
 struct ContentView: View {
     @EnvironmentObject private var dbManager: DatabaseManager
     @EnvironmentObject private var queryStore: SQLQueryStore
+    @Environment(\.openWindow) private var openWindow
     @State private var selectedTab: Tab = .data
     @State private var tableFilter = ""
     @State private var queryFilter = ""
@@ -77,6 +78,10 @@ struct ContentView: View {
     @State private var activeSqlQueriesHeight: Double? = nil
     @State private var dragStartHeight: Double? = nil
     @State private var isDraggingDivider = false
+
+    // Export state
+    @State private var exportAllRows = false
+    @State private var showExportConfirm = false
 
     // Editor Resizing State
     @AppStorage("sqlEditorHeight") private var savedSqlEditorHeight: Double = 150
@@ -252,9 +257,15 @@ struct ContentView: View {
                 .disabled(dbManager.fileURL == nil)
 
                 Button(action: {
-                    FileActions.openFile(dbManager: dbManager)
+                    FileActions.openFile(dbManager: dbManager, openWindow: openWindow)
                 }) {
                     Label("Open Database", systemImage: "folder")
+                }
+
+                Button(action: {
+                    FileActions.importCSV(dbManager: dbManager, openWindow: openWindow)
+                }) {
+                    Label("Import CSV", systemImage: "square.and.arrow.down")
                 }
             }
         }
@@ -337,6 +348,14 @@ struct ContentView: View {
                 NSEvent.removeMonitor(monitor)
                 queryEventMonitor = nil
             }
+        }
+        .alert("Export Confirmation", isPresented: $showExportConfirm) {
+            Button("Cancel", role: .cancel) { }
+            Button("Export All") {
+                Task { await doExportAll() }
+            }
+        } message: {
+            Text("This will export all \(dbManager.totalRows) rows. The file may be large. Continue?")
         }
     }
 
@@ -421,6 +440,24 @@ struct ContentView: View {
                 }
 
                 Spacer()
+
+                if !dbManager.rows.isEmpty {
+                    Toggle("Export all rows", isOn: $exportAllRows)
+                        .toggleStyle(.checkbox)
+                        .controlSize(.small)
+                        .font(.caption)
+
+                    Button {
+                        if exportAllRows {
+                            Task { await prepareExportAll() }
+                        } else {
+                            exportCSV(rows: dbManager.rows.map { $0.data })
+                        }
+                    } label: {
+                        Label("Export CSV", systemImage: "square.and.arrow.up")
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
             .padding(8)
         }
@@ -454,11 +491,15 @@ struct ContentView: View {
                     .font(.headline)
                     .foregroundColor(.secondary)
                 Button("Open SQLite File...") {
-                    FileActions.openFile(dbManager: dbManager)
+                    FileActions.openFile(dbManager: dbManager, openWindow: openWindow)
                 }
                 .buttonStyle(.borderedProminent)
                 Button("New Database...") {
-                    FileActions.createNewFile(dbManager: dbManager)
+                    FileActions.createNewFile(dbManager: dbManager, openWindow: openWindow)
+                }
+                .buttonStyle(.bordered)
+                Button("Import CSV...") {
+                    FileActions.importCSV(dbManager: dbManager, openWindow: openWindow)
                 }
                 .buttonStyle(.bordered)
             }
@@ -766,6 +807,61 @@ struct ContentView: View {
         }
         let result = query.rangeToExecute(withSelection: range)
         return String(sql[result])
+    }
+
+    private func prepareExportAll() async {
+        let count = dbManager.totalRows
+        if count > 5000 {
+            showExportConfirm = true
+        } else {
+            await doExportAll()
+        }
+    }
+
+    private func doExportAll() async {
+        do {
+            let data = try await dbManager.fetchAllRowsForExport()
+            guard let url = showSavePanel() else { return }
+            writeCSV(rows: data.rows, columns: data.columns, to: url)
+        } catch {
+            dbManager.errorMessage = "Export failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func exportCSV(rows: [[String: String]]) {
+        guard let url = showSavePanel() else { return }
+        writeCSV(rows: rows, columns: dbManager.columns, to: url)
+    }
+
+    private func showSavePanel() -> URL? {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.commaSeparatedText]
+        panel.nameFieldStringValue = "export.csv"
+        var url: URL?
+        if panel.runModal() == .OK {
+            url = panel.url
+        }
+        return url
+    }
+
+    private func writeCSV(rows: [[String: String]], columns: [String], to url: URL) {
+        var csv = columns.map { escapeCSV($0) }.joined(separator: ",") + "\n"
+        for row in rows {
+            let line = columns.map { col in escapeCSV(row[col] ?? "") }.joined(separator: ",")
+            csv += line + "\n"
+        }
+        do {
+            try csv.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            dbManager.errorMessage = "Export failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func escapeCSV(_ value: String) -> String {
+        if value.contains(",") || value.contains("\"") || value.contains("\n") {
+            return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
+        }
+        return value
     }
 }
 

@@ -9,3 +9,6 @@ SQLiteo-*
 SQLiteo.app/*
 .build-export/
 .build*
+xcuserdata/
+*.xcuserdata/*
+*.xcuserdatad/*

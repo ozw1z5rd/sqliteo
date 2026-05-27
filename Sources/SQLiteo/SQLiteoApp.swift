@@ -24,14 +24,18 @@ struct SQLiteoApp: App {
                 .keyboardShortcut("n", modifiers: [.command, .shift])
 
                 Button("New Database...") {
-                    FileActions.createNewFile(dbManager: dbManager)
+                    FileActions.createNewFile(dbManager: dbManager, openWindow: openWindow)
                 }
                 .keyboardShortcut("n", modifiers: .command)
 
                 Button("Open SQLite File...") {
-                    FileActions.openFile(dbManager: dbManager)
+                    FileActions.openFile(dbManager: dbManager, openWindow: openWindow)
                 }
                 .keyboardShortcut("o", modifiers: .command)
+
+                Button("Import CSV...") {
+                    FileActions.importCSV(dbManager: dbManager, openWindow: openWindow)
+                }
             }
 
             CommandGroup(after: .newItem) {
@@ -88,6 +92,7 @@ private struct RefreshCommand: View {
 private struct OpenRecentMenu: View {
     var dbManager: DatabaseManager?
     @EnvironmentObject private var recentFiles: RecentFilesManager
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Menu("Open Recent") {
@@ -119,7 +124,8 @@ private struct OpenRecentMenu: View {
                 await dbManager.connect(to: url)
             }
         } else {
-            NSWorkspace.shared.open(url)
+            DatabaseManager.pendingFileURL = url
+            openWindow(id: "main")
         }
     }
 }

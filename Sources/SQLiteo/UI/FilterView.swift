@@ -67,6 +67,13 @@ struct FilterView: View {
 
                 Spacer()
 
+                if dbManager.isLoading {
+                    Button("Cancel") {
+                        dbManager.cancelQuery()
+                    }
+                    .buttonStyle(.bordered)
+                }
+
                 Button("Apply") {
                     Task {
                         await dbManager.applyFilter()
