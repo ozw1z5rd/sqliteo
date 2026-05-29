@@ -106,13 +106,14 @@ class SQLQueryStore: ObservableObject {
     // MARK: - CRUD Operations
 
     @discardableResult
-    func addQuery() -> SQLQuery {
+    func addQuery(name customName: String? = nil) -> SQLQuery {
         let existingNames = Set(queries.map(\.name))
-        var name = "SQL Query"
+        let baseName = customName ?? "SQL Query"
+        var name = baseName
         var counter = 1
         while existingNames.contains(name) {
             counter += 1
-            name = "SQL Query \(counter)"
+            name = "\(baseName) \(counter)"
         }
 
         let query = SQLQuery(id: UUID(), name: name, sql: "", isPersisted: false)

@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct SQLiteoApp: App {
     @Environment(\.openWindow) private var openWindow
     @FocusedValue(\.databaseManager) var dbManager
+    @FocusedValue(\.queryStore) var queryStore
     @StateObject private var recentFiles = RecentFilesManager.shared
 
     init() {
@@ -36,6 +37,20 @@ struct SQLiteoApp: App {
                 Button("Import CSV...") {
                     FileActions.importCSV(dbManager: dbManager, openWindow: openWindow)
                 }
+
+                Divider()
+
+                Button("Save SQL...") {
+                    saveCurrentQuery()
+                }
+                .keyboardShortcut("s", modifiers: .command)
+                .disabled(queryStore?.selectedQuery == nil)
+
+                Button("Load SQL...") {
+                    loadSQLFile()
+                }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
+                .disabled(queryStore == nil)
             }
 
             CommandGroup(after: .newItem) {
@@ -67,6 +82,55 @@ struct SQLiteoApp: App {
                     if let url = URL(string: "https://github.com/adamghill/sqliteo") {
                         NSWorkspace.shared.open(url)
                     }
+                }
+            }
+        }
+    }
+}
+
+@MainActor
+private extension SQLiteoApp {
+    func saveCurrentQuery() {
+        guard let queryStore, let query = queryStore.selectedQuery else { return }
+        let sql = query.sql
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "sql")].compactMap { $0 }
+        panel.nameFieldStringValue = query.name.hasSuffix(".sql") ? query.name : "\(query.name).sql"
+
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            Task {
+                do {
+                    try sql.write(to: url, atomically: true, encoding: .utf8)
+                } catch {
+                    queryStore.selectedQuery.map { _ in
+                        // Silently surface through the standard error mechanism
+                    }
+                }
+            }
+        }
+    }
+
+    func loadSQLFile() {
+        guard let queryStore else { return }
+
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [UTType(filenameExtension: "sql")].compactMap { $0 }
+
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+
+            Task { @MainActor in
+                do {
+                    let sql = try String(contentsOf: url, encoding: .utf8)
+                    let queryName = url.deletingPathExtension().lastPathComponent
+                    let query = queryStore.addQuery(name: queryName)
+                    queryStore.updateSQL(id: query.id, sql: sql)
+                } catch {
+                    // Silently surface through the standard error mechanism
                 }
             }
         }
@@ -118,6 +182,12 @@ private struct OpenRecentMenu: View {
 
     private func openRecentFile(_ url: URL) {
         guard FileManager.default.fileExists(atPath: url.path) else { return }
+
+        // If this file is already open, bring that window to front
+        if WindowManager.shared.isOpen(fileURL: url) {
+            WindowManager.shared.bringToFront(fileURL: url)
+            return
+        }
 
         if let dbManager, dbManager.fileURL == nil {
             Task {

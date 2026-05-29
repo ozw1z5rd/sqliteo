@@ -23,11 +23,17 @@ struct FileActions {
 
         panel.begin { response in
             if response == .OK, let url = panel.url {
+                // If this file is already open in another window, bring that window to front
+                if WindowManager.shared.isOpen(fileURL: url) {
+                    WindowManager.shared.bringToFront(fileURL: url)
+                    return
+                }
                 if let dbManager, dbManager.fileURL == nil {
                     Task {
                         await dbManager.connect(to: url)
                     }
                 } else if let openWindow {
+                    // This window already has a database open — open a new window for the new file
                     DatabaseManager.pendingFileURL = url
                     openWindow(id: "main")
                 }
@@ -58,6 +64,11 @@ struct FileActions {
                     if !FileManager.default.fileExists(atPath: url.path) {
                         FileManager.default.createFile(
                             atPath: url.path, contents: nil, attributes: nil)
+                    }
+                    // If this file is already open, bring that window to front
+                    if WindowManager.shared.isOpen(fileURL: url) {
+                        WindowManager.shared.bringToFront(fileURL: url)
+                        return
                     }
                     if let dbManager, dbManager.fileURL == nil {
                          await dbManager.connect(to: url)

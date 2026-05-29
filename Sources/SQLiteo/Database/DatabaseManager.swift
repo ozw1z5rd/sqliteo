@@ -93,6 +93,7 @@ class DatabaseManager: ObservableObject {
     func cancelQuery() {
         currentQueryTask?.cancel()
         dbQueue?.interrupt()
+        self.isLoading = false
     }
     @Published var errorMessage: String? = nil
 
@@ -113,11 +114,16 @@ class DatabaseManager: ObservableObject {
     // Used to pass a file URL to a new window
     static var pendingFileURL: URL?
 
+    /// RootView assigns a unique UUID so WindowManager can find this window by its NSWindow identifier.
+    var windowIdentifier: String?
+
     // File Metadata
     @Published var fileURL: URL?
     @Published var fileSize: Int64 = 0
     @Published var creationDate: Date?
     @Published var modificationDate: Date?
+    @Published var filePermissions: String = ""
+    @Published var fileOwner: String = ""
 
     // Tracks current editing state before it is committed to pendingChanges
     @Published var activeEdits: [TableRowID: [String: String]] = [:]
@@ -172,6 +178,11 @@ class DatabaseManager: ObservableObject {
         self.columnCache = [:]
         self.schemaCache = [:]
 
+        // Unregister previous URL if switching to a different one
+        if let oldURL = self.fileURL, oldURL.resolvingSymlinksInPath() != url.resolvingSymlinksInPath() {
+            WindowManager.shared.unregister(fileURL: oldURL)
+        }
+
         do {
             self.fileURL = url
             RecentFilesManager.shared.add(url)
@@ -180,6 +191,12 @@ class DatabaseManager: ObservableObject {
             self.fileSize = attr[.size] as? Int64 ?? 0
             self.creationDate = attr[.creationDate] as? Date
             self.modificationDate = attr[.modificationDate] as? Date
+            if let posixMode = attr[.posixPermissions] as? Int16 {
+                self.filePermissions = Self.formatPermissions(mode: posixMode)
+            } else {
+                self.filePermissions = ""
+            }
+            self.fileOwner = attr[.ownerAccountName] as? String ?? ""
 
             let path = url.path
             let queue = try await Task.detached {
@@ -191,6 +208,11 @@ class DatabaseManager: ObservableObject {
             self.prefetchTask?.cancel()
             self.prefetchTask = Task.detached { [weak self] in
                 await self?.prefetchAllSchemas()
+            }
+
+            // Register this URL with WindowManager so we can find this window later
+            if let windowID = self.windowIdentifier {
+                WindowManager.shared.register(fileURL: url, windowIdentifier: windowID)
             }
         } catch {
             self.errorMessage = "Error connecting to database: \(error.localizedDescription)"
@@ -921,6 +943,21 @@ class DatabaseManager: ObservableObject {
         
         // Force UI update
         self.dataUpdateCounter += 1
+    }
+
+    /// Convert a POSIX permission bitmask (e.g. 0o644) to the familiar `-rw-r--r--` string.
+    private static func formatPermissions(mode: Int16) -> String {
+        let fileType: Character = (mode & 0o040000) != 0 ? "d" : "-"
+        let ownerR = (mode & 0o400) != 0 ? "r" : "-"
+        let ownerW = (mode & 0o200) != 0 ? "w" : "-"
+        let ownerX = (mode & 0o100) != 0 ? (mode & 0o4000) != 0 ? "s" : "x" : (mode & 0o4000) != 0 ? "S" : "-"
+        let groupR = (mode & 0o040) != 0 ? "r" : "-"
+        let groupW = (mode & 0o020) != 0 ? "w" : "-"
+        let groupX = (mode & 0o010) != 0 ? (mode & 0o2000) != 0 ? "s" : "x" : (mode & 0o2000) != 0 ? "S" : "-"
+        let otherR = (mode & 0o004) != 0 ? "r" : "-"
+        let otherW = (mode & 0o002) != 0 ? "w" : "-"
+        let otherX = (mode & 0o001) != 0 ? (mode & 0o1000) != 0 ? "t" : "x" : (mode & 0o1000) != 0 ? "T" : "-"
+        return "\(fileType)\(ownerR)\(ownerW)\(ownerX)\(groupR)\(groupW)\(groupX)\(otherR)\(otherW)\(otherX)"
     }
 }
 

@@ -64,7 +64,10 @@ struct ContentView: View {
     @State private var isCyclingAutocomplete = false
     @State private var autocompleteCycleIndex = 0
     @State private var ignoreNextSQLChange = false
-    @State private var lastInsertedSuggestionLength = 0
+
+    // Delete query confirmation state
+    @State private var queryToDelete: SQLQuery?
+    @State private var skipDeleteQueryConfirmation = false
 
     // Inline rename state
     @State private var editingQueryID: UUID?
@@ -186,7 +189,9 @@ struct ContentView: View {
                     fileName: fileURL.lastPathComponent,
                     filePath: fileURL.path,
                     fileSize: dbManager.fileSize,
-                    dateModified: dbManager.modificationDate ?? Date()
+                    dateModified: dbManager.modificationDate ?? Date(),
+                    filePermissions: dbManager.filePermissions,
+                    fileOwner: dbManager.fileOwner
                 )
                 .padding()
             }
@@ -306,11 +311,19 @@ struct ContentView: View {
                     suggestions: suggestions,
                     editorPosition: $editorPosition,
                     onSuggest: { Task { await updateSuggestions(for: queryStore.selectedQuery?.sql ?? "") } },
-                    onCycle: { cycleSuggestion() }
+                    onAccept: {
+                        if isCyclingAutocomplete, autocompleteCycleIndex < suggestions.count {
+                            insertSuggestion(suggestions[autocompleteCycleIndex])
+                        } else if let first = suggestions.first {
+                            insertSuggestion(first)
+                        }
+                    }
                 ))
 
                 if showSuggestions && !suggestions.isEmpty {
-                    suggestionBar
+                    if #available(macOS 14.0, *) {
+                        suggestionBar
+                    }
                 }
             }
             .overlay(alignment: .bottom) {
@@ -430,14 +443,13 @@ struct ContentView: View {
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.return, modifiers: .command)
 
-                if dbManager.isLoading {
-                    Button {
-                        dbManager.cancelQuery()
-                    } label: {
-                        Label("Cancel", systemImage: "stop.circle.fill")
-                    }
-                    .buttonStyle(.bordered)
+                Button {
+                    dbManager.cancelQuery()
+                } label: {
+                    Label("Cancel", systemImage: "stop.circle.fill")
                 }
+                .buttonStyle(.bordered)
+                .disabled(!dbManager.isLoading)
 
                 Spacer()
 
@@ -490,6 +502,9 @@ struct ContentView: View {
                 Text("Open a database")
                     .font(.headline)
                     .foregroundColor(.secondary)
+
+                recentFilesList
+
                 Button("Open SQLite File...") {
                     FileActions.openFile(dbManager: dbManager, openWindow: openWindow)
                 }
@@ -510,6 +525,62 @@ struct ContentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var recentFilesList: some View {
+        let recents = RecentFilesManager.shared.recentURLs.prefix(5)
+        if recents.isEmpty {
+            return AnyView(EmptyView())
+        }
+        return AnyView(
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Recent files")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                ForEach(Array(recents), id: \.path) { url in
+                    Button {
+                        openRecent(url: url)
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "doc")
+                                .foregroundColor(.accentColor)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(url.lastPathComponent)
+                                    .font(.subheadline)
+                                    .foregroundColor(.primary)
+                                Text(url.path)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .background(Color.accentColor.opacity(0.08))
+                    .cornerRadius(6)
+                }
+            }
+            .frame(maxWidth: 400)
+        )
+    }
+
+    private func openRecent(url: URL) {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+
+        if WindowManager.shared.isOpen(fileURL: url) {
+            WindowManager.shared.bringToFront(fileURL: url)
+        } else if dbManager.fileURL == nil {
+            Task {
+                await dbManager.connect(to: url)
+            }
+        } else {
+            DatabaseManager.pendingFileURL = url
+            openWindow(id: "main")
+        }
     }
 
     // MARK: - Shared Helpers
@@ -598,6 +669,19 @@ struct ContentView: View {
                 }
             }
             .listStyle(.sidebar)
+            .sheet(item: $queryToDelete) { query in
+                DeleteQueryConfirmationView(
+                    queryName: query.name,
+                    onDelete: {
+                        queryStore.deleteQuery(id: query.id)
+                        queryToDelete = nil
+                    },
+                    onCancel: {
+                        queryToDelete = nil
+                    },
+                    skipConfirmation: $skipDeleteQueryConfirmation
+                )
+            }
 
             if queryStore.queries.count > 3 {
                 HStack(spacing: 4) {
@@ -640,19 +724,46 @@ struct ContentView: View {
                 editingQueryID = nil
             }
         } else {
-            Text(query.name)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .contextMenu {
-                    Button("Rename") {
+            HStack(spacing: 4) {
+                Text(query.name)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .onTapGesture {
+                        // Single click on the name enters rename (Finder-style)
                         editingQueryID = query.id
                         editingQueryName = query.name
                     }
-                    Divider()
-                    Button("Delete", role: .destructive) {
-                        queryStore.deleteQuery(id: query.id)
-                    }
+
+                Button {
+                    deleteQuery(query)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
+                .buttonStyle(.plain)
+                .help("Delete query")
+                .opacity(queryStore.selectedQueryID == query.id ? 1 : 0)
+            }
+            .contentShape(Rectangle())
+            .contextMenu {
+                Button("Rename") {
+                    editingQueryID = query.id
+                    editingQueryName = query.name
+                }
+                Divider()
+                Button("Delete", role: .destructive) {
+                    deleteQuery(query)
+                }
+            }
+        }
+    }
+
+    private func deleteQuery(_ query: SQLQuery) {
+        if skipDeleteQueryConfirmation {
+            queryStore.deleteQuery(id: query.id)
+        } else {
+            queryToDelete = query
         }
     }
 
@@ -737,8 +848,7 @@ struct ContentView: View {
             var sql = queryStore.selectedQuery?.sql
         else { return }
 
-        let charactersToDrop =
-            isCyclingAutocomplete ? lastInsertedSuggestionLength : currentWord.count
+        let charactersToDrop = currentWord.count
 
         let prefix: String
         if currentWord.contains(".") {
@@ -748,7 +858,7 @@ struct ContentView: View {
             prefix = ""
         }
 
-        if currentWord.isEmpty && !isCyclingAutocomplete {
+        if currentWord.isEmpty {
             sql += suggestion + " "
         } else {
             sql = String(sql.dropLast(charactersToDrop)) + "\(prefix)\(suggestion) "
@@ -758,44 +868,6 @@ struct ContentView: View {
         queryStore.updateSQL(id: queryID, sql: sql)
         currentWord = ""
         showSuggestions = false
-    }
-
-    private func cycleSuggestion() {
-        guard let queryID = queryStore.selectedQueryID,
-            var sql = queryStore.selectedQuery?.sql
-        else { return }
-
-        let charactersToDrop: Int
-        if !isCyclingAutocomplete {
-            isCyclingAutocomplete = true
-            autocompleteCycleIndex = 0
-            charactersToDrop = currentWord.count
-        } else {
-            autocompleteCycleIndex = (autocompleteCycleIndex + 1) % suggestions.count
-            charactersToDrop = lastInsertedSuggestionLength
-        }
-
-        let suggestion = suggestions[autocompleteCycleIndex]
-        let prefix: String
-        if currentWord.contains(".") {
-            let parts = currentWord.components(separatedBy: ".")
-            prefix = (parts.first ?? "") + "."
-        } else {
-            prefix = ""
-        }
-
-        let textToInsert = prefix + suggestion
-        sql = String(sql.dropLast(charactersToDrop)) + textToInsert
-        lastInsertedSuggestionLength = textToInsert.count
-
-        ignoreNextSQLChange = true
-        queryStore.updateSQL(id: queryID, sql: sql)
-
-        let highlightLength = max(0, textToInsert.utf16.count - currentWord.utf16.count)
-        let highlightLocation = sql.utf16.count - highlightLength
-        editorPosition.selections = [
-            NSRange(location: max(0, highlightLocation), length: highlightLength)
-        ]
     }
 
     private func textToExecute(for query: SQLQuery) -> String {
@@ -879,7 +951,7 @@ private struct SQLEditorKeyHandler: ViewModifier {
     var suggestions: [String]
     @Binding var editorPosition: CodeEditor.Position
     var onSuggest: () -> Void
-    var onCycle: () -> Void
+    var onAccept: () -> Void
 
     func body(content: Content) -> some View {
         if #available(macOS 14.0, *) {
@@ -906,7 +978,7 @@ private struct SQLEditorKeyHandler: ViewModifier {
                 }
                 .onKeyPress(.tab, phases: .down) { press in
                     if showSuggestions && !suggestions.isEmpty {
-                        onCycle()
+                        onAccept()
                         return .handled
                     }
                     return .ignored
@@ -914,5 +986,39 @@ private struct SQLEditorKeyHandler: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+// MARK: - Delete Query Confirmation
+
+private struct DeleteQueryConfirmationView: View {
+    let queryName: String
+    let onDelete: () -> Void
+    let onCancel: () -> Void
+    @Binding var skipConfirmation: Bool
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Delete \"\(queryName)\"?")
+                .font(.headline)
+            Text("This action cannot be undone.")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+
+            Toggle(isOn: $skipConfirmation) {
+                Text("Don't ask again until restart")
+                    .font(.caption)
+            }
+            .toggleStyle(.checkbox)
+
+            HStack(spacing: 12) {
+                Button("Cancel", action: onCancel)
+                    .keyboardShortcut(.escape)
+                Button("Delete", role: .destructive, action: onDelete)
+                    .keyboardShortcut(.return)
+            }
+        }
+        .padding(20)
+        .frame(width: 300)
     }
 }

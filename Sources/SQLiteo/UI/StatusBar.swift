@@ -78,6 +78,8 @@ struct FileMetadataView: View {
     let filePath: String
     let fileSize: Int64
     let dateModified: Date
+    let filePermissions: String
+    let fileOwner: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -86,12 +88,31 @@ struct FileMetadataView: View {
             Text(filePath)
                 .font(.caption)
                 .foregroundColor(.secondary)
+                .lineLimit(2)
+                .truncationMode(.middle)
+            HStack(spacing: 4) {
+                Text(filePermissions)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .monospaced()
+                Text(fileOwner)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
             Text("Size: \(ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file))")
                 .font(.caption)
                 .foregroundColor(.secondary)
             Text("Modified: \(dateModified.formatted())")
                 .font(.caption)
                 .foregroundColor(.secondary)
+            Button {
+                NSWorkspace.shared.selectFile(filePath, inFileViewerRootedAtPath: "")
+            } label: {
+                Label("Reveal in Finder", systemImage: "folder")
+                    .font(.caption)
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(.accentColor)
         }
     }
 }
