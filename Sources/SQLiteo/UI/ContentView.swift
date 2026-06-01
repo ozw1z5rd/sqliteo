@@ -85,6 +85,10 @@ struct ContentView: View {
     // Export state
     @State private var exportAllRows = false
     @State private var showExportConfirm = false
+    @State private var isExporting = false
+
+    // Expanded tables in sidebar
+    @State private var expandedTables: Set<String> = []
 
     // Editor Resizing State
     @AppStorage("sqlEditorHeight") private var savedSqlEditorHeight: Double = 150
@@ -173,8 +177,77 @@ struct ContentView: View {
             }
 
             List(filteredTableNames, id: \.self, selection: tableSelectionBinding) { tableName in
-                Text(tableName)
-                    .tag(tableName)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "tablecells")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .frame(width: 14)
+
+                        Text(tableName)
+                            .lineLimit(1)
+                            .tag(tableName)
+
+                        Spacer()
+
+                        Button {
+                            if expandedTables.contains(tableName) {
+                                expandedTables.remove(tableName)
+                            } else {
+                                expandedTables.insert(tableName)
+                            }
+                        } label: {
+                            Image(systemName: expandedTables.contains(tableName) ? "chevron.down" : "chevron.right")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Show columns")
+                    }
+
+                    if expandedTables.contains(tableName) {
+                        if let schema = dbManager.schema(for: tableName) {
+                            ForEach(schema.columns, id: \.self) { col in
+                                HStack(spacing: 4) {
+                                    Rectangle()
+                                        .fill(Color.secondary.opacity(0.3))
+                                        .frame(width: 1)
+                                        .padding(.leading, 7)
+
+                                    Image(systemName: "text.alignleft")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                        .frame(width: 10)
+
+                                    Text(col)
+                                        .font(.caption)
+                                        .foregroundColor(.primary)
+                                        .lineLimit(1)
+
+                                    if let type = schema.types[col] {
+                                        Text(type)
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(1)
+                                    }
+
+                                    if schema.primaryKeys.contains(col) {
+                                        Image(systemName: "key.fill")
+                                            .font(.caption2)
+                                            .foregroundColor(.orange)
+                                    }
+                                }
+                                .padding(.leading, 14)
+                            }
+                        } else {
+                            Text("Loading…")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .padding(.leading, 14)
+                        }
+                    }
+                }
+                .padding(.vertical, 2)
             }
             .navigationTitle("Tables")
             .listStyle(.sidebar)
@@ -365,6 +438,7 @@ struct ContentView: View {
         .alert("Export Confirmation", isPresented: $showExportConfirm) {
             Button("Cancel", role: .cancel) { }
             Button("Export All") {
+                isExporting = true
                 Task { await doExportAll() }
             }
         } message: {
@@ -466,9 +540,16 @@ struct ContentView: View {
                             exportCSV(rows: dbManager.rows.map { $0.data })
                         }
                     } label: {
-                        Label("Export CSV", systemImage: "square.and.arrow.up")
+                        if isExporting {
+                            ProgressView()
+                                .controlSize(.small)
+                                .scaleEffect(0.7)
+                        } else {
+                            Label("Export CSV", systemImage: "square.and.arrow.up")
+                        }
                     }
                     .buttonStyle(.bordered)
+                    .disabled(isExporting)
                 }
             }
             .padding(8)
@@ -730,6 +811,8 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .onTapGesture {
                         // Single click on the name enters rename (Finder-style)
+                        queryStore.selectedQueryID = query.id
+                        dbManager.clearDataForSQLConsole()
                         editingQueryID = query.id
                         editingQueryName = query.name
                     }
@@ -882,6 +965,8 @@ struct ContentView: View {
     }
 
     private func prepareExportAll() async {
+        isExporting = true
+        defer { isExporting = false }
         let count = dbManager.totalRows
         if count > 5000 {
             showExportConfirm = true
@@ -891,6 +976,7 @@ struct ContentView: View {
     }
 
     private func doExportAll() async {
+        defer { isExporting = false }
         do {
             let data = try await dbManager.fetchAllRowsForExport()
             guard let url = showSavePanel() else { return }
@@ -901,8 +987,10 @@ struct ContentView: View {
     }
 
     private func exportCSV(rows: [[String: String]]) {
-        guard let url = showSavePanel() else { return }
+        isExporting = true
+        guard let url = showSavePanel() else { isExporting = false; return }
         writeCSV(rows: rows, columns: dbManager.columns, to: url)
+        isExporting = false
     }
 
     private func showSavePanel() -> URL? {

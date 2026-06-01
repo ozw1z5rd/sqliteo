@@ -23,6 +23,20 @@ struct RootView: View {
             .focusedSceneValue(\.databaseManager, dbManager)
             .focusedSceneValue(\.queryStore, queryStore)
             .onAppear {
+                // Set app icon from asset catalog (SPM doesn't auto-link it)
+                let resourceBundle: Bundle = {
+                    let mainPath = Bundle.main.bundleURL.appendingPathComponent("SQLiteo_SQLiteo.bundle").path
+                    let buildPath = Bundle.main.bundleURL
+                        .deletingLastPathComponent()
+                        .appendingPathComponent("SQLiteo_SQLiteo.bundle").path
+                    return Bundle(path: mainPath) ?? Bundle(path: buildPath) ?? Bundle.main
+                }()
+                if let iconURL = resourceBundle.url(forResource: "AppIcon", withExtension: "png"),
+                   let appIcon = NSImage(contentsOf: iconURL)
+                {
+                    NSApp.applicationIconImage = appIcon
+                }
+
                 if let url = DatabaseManager.pendingFileURL {
                     DatabaseManager.pendingFileURL = nil
                     Task {

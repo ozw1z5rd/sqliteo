@@ -1,7 +1,10 @@
 import AppKit
 import Foundation
 import GRDB
+import OSLog
 import UniformTypeIdentifiers
+
+private let dbLog = OSLog(subsystem: "com.bigfoot.sqliteo", category: "database")
 
 enum TableRowID: Hashable, Equatable {
     case rowid(Int64)
@@ -101,6 +104,9 @@ class DatabaseManager: ObservableObject {
     var tableHasRowid: Bool = true
     private var columnCache: [String: [String]] = [:]
 
+    /// Incremented whenever schema cache is updated, so views can observe changes.
+    @Published var schemaUpdateCounter = 0
+
     struct TableSchema {
         let columns: [String]
         let types: [String: String]
@@ -124,6 +130,14 @@ class DatabaseManager: ObservableObject {
     @Published var modificationDate: Date?
     @Published var filePermissions: String = ""
     @Published var fileOwner: String = ""
+
+    private var securityScopedURL: URL?
+
+    deinit {
+        if let url = securityScopedURL {
+            url.stopAccessingSecurityScopedResource()
+        }
+    }
 
     // Tracks current editing state before it is committed to pendingChanges
     @Published var activeEdits: [TableRowID: [String: String]] = [:]
@@ -184,10 +198,28 @@ class DatabaseManager: ObservableObject {
         }
 
         do {
+            os_log(.info, log: dbLog, "connect(to:) called with: %@", url.path)
+
+            // Stop previous security scope if reconnecting
+            if let previous = securityScopedURL {
+                os_log(.debug, log: dbLog, "Stopping previous security scope for: %@", previous.path)
+                previous.stopAccessingSecurityScopedResource()
+            }
+            // Start security-scoped access (required for sandboxed write access)
+            let didStart = url.startAccessingSecurityScopedResource()
+            os_log(.info, log: dbLog, "startAccessingSecurityScopedResource returned: %{BOOL}@", didStart ? "YES" : "NO")
+            if didStart {
+                securityScopedURL = url
+                os_log(.debug, log: dbLog, "Security scope started for: %@", url.path)
+            } else {
+                os_log(.error, log: dbLog, "FAILED to start security-scoped access — writes will likely fail")
+            }
+
             self.fileURL = url
             RecentFilesManager.shared.add(url)
 
             let attr = try FileManager.default.attributesOfItem(atPath: url.path)
+            os_log(.debug, log: dbLog, "File attributes retrieved successfully")
             self.fileSize = attr[.size] as? Int64 ?? 0
             self.creationDate = attr[.creationDate] as? Date
             self.modificationDate = attr[.modificationDate] as? Date
@@ -198,10 +230,44 @@ class DatabaseManager: ObservableObject {
             }
             self.fileOwner = attr[.ownerAccountName] as? String ?? ""
 
+            // Ensure the file is user-writable so SQLite can open in read-write mode
+            if let posixMode = attr[.posixPermissions] as? Int16 {
+                os_log(.info, log: dbLog, "File posix permissions: 0o%03o (user-writable: %{BOOL}@)", posixMode, (posixMode & 0o200 != 0) ? "YES" : "NO")
+                if posixMode & 0o200 == 0 {
+                    os_log(.info, log: dbLog, "File is not user-writable — attempting chmod u+w")
+                    try FileManager.default.setAttributes(
+                        [.posixPermissions: posixMode | 0o200],
+                        ofItemAtPath: url.path
+                    )
+                    // Verify
+                    if let newMode = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.posixPermissions] as? Int16 {
+                        os_log(.info, log: dbLog, "chmod result: 0o%03o (user-writable: %{BOOL}@)", newMode, (newMode & 0o200 != 0) ? "YES" : "NO")
+                    }
+                }
+            } else {
+                os_log(.error, log: dbLog, "Could not read file posix permissions")
+            }
+
             let path = url.path
+            os_log(.info, log: dbLog, "Opening DatabaseQueue at: %@", path)
             let queue = try await Task.detached {
                 try DatabaseQueue(path: path)
             }.value
+
+            os_log(.info, log: dbLog, "DatabaseQueue opened — configuration.readonly: %{BOOL}@", queue.configuration.readonly ? "YES" : "NO")
+            if queue.configuration.readonly {
+                os_log(.error, log: dbLog, "DATABASE OPENED AS READ-ONLY — writes will fail!")
+            }
+
+            // Quick write test to verify
+            do {
+                try await queue.write { db in
+                    try db.execute(sql: "PRAGMA schema_version")
+                }
+                os_log(.info, log: dbLog, "Write test passed — database is writable")
+            } catch {
+                os_log(.error, log: dbLog, "Write test FAILED: %@", error.localizedDescription)
+            }
 
             self.dbQueue = queue
             try await fetchTables()
@@ -365,6 +431,11 @@ class DatabaseManager: ObservableObject {
         self.foreignKeys = [:]
     }
 
+    /// Returns the cached schema for a table, or nil if not yet fetched.
+    func schema(for tableName: String) -> TableSchema? {
+        schemaCache[tableName]
+    }
+
     private func fetchTableDDL(for tableName: String) async throws {
         guard let dbQueue = dbQueue else { return }
 
@@ -420,6 +491,7 @@ class DatabaseManager: ObservableObject {
             }
             schemaCache[tableName] = schema
             columnCache[tableName] = schema.columns
+            schemaUpdateCounter += 1
         }
 
         self.columns = schema.columns
@@ -600,7 +672,12 @@ class DatabaseManager: ObservableObject {
     }
 
     func executeCustomSQL(_ sql: String, resetOffset: Bool = true) async {
-        guard let dbQueue = dbQueue else { return }
+        guard let dbQueue = dbQueue else {
+            os_log(.error, log: dbLog, "executeCustomSQL: dbQueue is nil")
+            return
+        }
+
+        os_log(.info, log: dbLog, "executeCustomSQL: %@", sql)
 
         self.selectedTableName = nil
         self.customSQL = sql
@@ -620,21 +697,45 @@ class DatabaseManager: ObservableObject {
             let offsetSnapshot = self.offset
             let limitSnapshot = self.limit
 
-            let (newColumns, total, newRows) = try await dbQueue.read {
-                db -> ([String], Int, [DBRow]) in
-                var count = 0
-                var cleanSQL = sql.trimmingCharacters(in: .whitespacesAndNewlines)
-                while cleanSQL.hasSuffix(";") {
-                    cleanSQL.removeLast()
-                    cleanSQL = cleanSQL.trimmingCharacters(in: .whitespacesAndNewlines)
-                }
+            var cleanSQL = sql.trimmingCharacters(in: .whitespacesAndNewlines)
+            while cleanSQL.hasSuffix(";") {
+                cleanSQL.removeLast()
+                cleanSQL = cleanSQL.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
 
+            let isWrite = Self.isWriteStatement(cleanSQL)
+            let writeSQL = cleanSQL  // immutable copy for concurrent capture
+
+            if isWrite {
+                try await dbQueue.write { db in
+                    try db.execute(sql: writeSQL)
+                }
+                os_log(.info, log: dbLog, "Write SQL executed successfully")
+                // Re-fetch tables in case schema changed
+                try await fetchTables()
+                // Clear schema cache and re-prefetch so expanded columns show new tables
+                self.schemaCache = [:]
+                self.columnCache = [:]
+                self.schemaUpdateCounter += 1
+                self.prefetchTask?.cancel()
+                self.prefetchTask = Task.detached { [weak self] in
+                    await self?.prefetchAllSchemas()
+                }
+                self.columns = []
+                self.rows = []
+                self.totalRows = 0
+                self.customSQL = sql
+            } else {
                 let isSelect = cleanSQL.uppercased().hasPrefix("SELECT")
 
                 var paginatedSQL = cleanSQL
+                var totalCount = 0
                 if isSelect {
                     do {
-                        count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM (\(cleanSQL))") ?? 0
+                        let countSQL = cleanSQL  // immutable copy for concurrent capture
+                        totalCount = try await dbQueue.read { db in
+                            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM (\(countSQL))") ?? 0
+                        }
                         paginatedSQL =
                             "SELECT * FROM (\(cleanSQL)) LIMIT \(limitSnapshot) OFFSET \(offsetSnapshot)"
                     } catch {
@@ -642,31 +743,33 @@ class DatabaseManager: ObservableObject {
                     }
                 }
 
-                let statement = try db.makeStatement(sql: paginatedSQL)
-                let cols = Array(statement.columnNames)
-                let rows = try Row.fetchAll(statement)
+                let readSQL = paginatedSQL  // immutable copy for concurrent capture
+                let capturedTotal = totalCount  // immutable copy for concurrent capture
+                let (newColumns, total, newRows) = try await dbQueue.read {
+                    db -> ([String], Int, [DBRow]) in
+                    let statement = try db.makeStatement(sql: readSQL)
+                    let cols = Array(statement.columnNames)
+                    let rows = try Row.fetchAll(statement)
+                    let count = isSelect ? capturedTotal : rows.count
 
-                if !isSelect || count == 0 {
-                    count = rows.count
-                }
-
-                let dbRows = rows.map { row in
-                    var dict: [String: String] = [:]
-                    for column in cols {
-                        if let val = row[column] {
-                            dict[column] = "\(val)"
+                    let dbRows = rows.map { row in
+                        var dict: [String: String] = [:]
+                        for column in cols {
+                            if let val = row[column] {
+                                dict[column] = "\(val)"
+                            }
                         }
+                        return DBRow(id: .uuid(UUID()), data: dict)
                     }
-                    return DBRow(id: .uuid(UUID()), data: dict)
+                    return (cols, count, dbRows)
                 }
-                return (cols, count, dbRows)
-            }
 
-            self.columns = newColumns
-            self.rows = newRows
-            self.totalRows = total
-            self.primaryKeyColumns = []
-            self.dataUpdateCounter += 1
+                self.columns = newColumns
+                self.rows = newRows
+                self.totalRows = total
+                self.primaryKeyColumns = []
+                self.dataUpdateCounter += 1
+            }
         } catch {
             if let dbError = error as? GRDB.DatabaseError, dbError.resultCode == .SQLITE_INTERRUPT {
                 return
@@ -705,7 +808,13 @@ class DatabaseManager: ObservableObject {
     }
 
     func saveChanges() async {
-        guard let dbQueue = dbQueue, let tableName = selectedTableName else { return }
+        guard let dbQueue = dbQueue, let tableName = selectedTableName else {
+            os_log(.error, log: dbLog, "saveChanges: dbQueue or selectedTableName is nil")
+            return
+        }
+
+        os_log(.info, log: dbLog, "saveChanges: saving %d pending changes to table '%@'", pendingChanges.count, tableName)
+        os_log(.debug, log: dbLog, "saveChanges: queue.configuration.readonly = %{BOOL}@", dbQueue.configuration.readonly ? "YES" : "NO")
 
         let changesToSave = self.pendingChanges
         let rowsSnapshot = self.rows
@@ -760,6 +869,10 @@ class DatabaseManager: ObservableObject {
             await self.applyFilter()
 
         } catch {
+            os_log(.error, log: dbLog, "saveChanges failed: %@ (domain: %@, code: %d)", error.localizedDescription, (error as NSError).domain, (error as NSError).code)
+            if let sqliteErr = error as? DatabaseError {
+                os_log(.error, log: dbLog, "DatabaseError — resultCode: %d, message: %@, sql: %@", sqliteErr.resultCode.rawValue, sqliteErr.message ?? "nil", sqliteErr.sql ?? "nil")
+            }
             self.errorMessage = "Error saving changes: \(error.localizedDescription)"
         }
     }
@@ -885,7 +998,11 @@ class DatabaseManager: ObservableObject {
     }
 
     func refreshDatabase() async {
-        guard dbQueue != nil else { return }
+        os_log(.info, log: dbLog, "refreshDatabase called")
+        guard dbQueue != nil else {
+            os_log(.error, log: dbLog, "refreshDatabase: dbQueue is nil, skipping")
+            return
+        }
         
         // 1. Clear Caches
         self.columnCache.removeAll()
@@ -907,7 +1024,9 @@ class DatabaseManager: ObservableObject {
         do {
             // Re-instanciate dbQueue to ensure any file-level changes are picked up and internal statement caches are flushed
             if let path = self.fileURL?.path {
+                os_log(.info, log: dbLog, "refreshDatabase: re-opening DatabaseQueue at: %@", path)
                 self.dbQueue = try DatabaseQueue(path: path)
+                os_log(.info, log: dbLog, "refreshDatabase: new queue readonly = %{BOOL}@", self.dbQueue!.configuration.readonly ? "YES" : "NO")
             }
             try await fetchTables()
         } catch {
@@ -958,6 +1077,18 @@ class DatabaseManager: ObservableObject {
         let otherW = (mode & 0o002) != 0 ? "w" : "-"
         let otherX = (mode & 0o001) != 0 ? (mode & 0o1000) != 0 ? "t" : "x" : (mode & 0o1000) != 0 ? "T" : "-"
         return "\(fileType)\(ownerR)\(ownerW)\(ownerX)\(groupR)\(groupW)\(groupX)\(otherR)\(otherW)\(otherX)"
+    }
+
+    /// Returns true if the SQL statement is a write operation (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, etc.)
+    private static func isWriteStatement(_ sql: String) -> Bool {
+        let trimmed = sql.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let writePrefixes = ["INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP", "REPLACE", "TRUNCATE", "VACUUM", "REINDEX", "ANALYZE", "ATTACH", "DETACH", "PRAGMA"]
+        for prefix in writePrefixes {
+            if trimmed.hasPrefix(prefix) {
+                return true
+            }
+        }
+        return false
     }
 }
 

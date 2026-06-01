@@ -8,4 +8,6 @@ This is a fork of the native macOS SQLite browser built for normal people, which
 
  OS13 branch has contains a port for older macOS 13
 
- 
+![App screenshot 1](img/1.png)
+
+![App screenshot 2](img/2.png)

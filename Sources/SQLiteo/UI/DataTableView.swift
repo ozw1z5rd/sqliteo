@@ -435,8 +435,11 @@ struct EditControlBar: View {
 
             Button {
                 dbManager.applyEdits()
+                Task {
+                    await dbManager.saveChanges()
+                }
             } label: {
-                Text("Apply")
+                Text("Save")
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.return, modifiers: [])

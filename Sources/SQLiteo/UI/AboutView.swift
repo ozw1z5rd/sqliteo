@@ -21,7 +21,10 @@ struct AboutView: View {
 
             Text("A native SQLite browser for macOS built with Swift.")
                 .multilineTextAlignment(.center)
+                .lineLimit(2)
                 .padding(.horizontal)
+            
+            Divider()
 
             Link(
                 "https://github.com/adamghill/sqliteo",
@@ -30,11 +33,33 @@ struct AboutView: View {
             .font(.body)
             .foregroundColor(.blue)
 
-            Divider()
 
-            Text("Created by Adam Hill")
+
+            Text("Original work by Adam Hill")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            Divider()
+            
+            
+
+            
+            Link(
+                "https://github.com/ozw1z5rd/sqliteo",
+                destination: URL(string: "https://github.com/ozw1z5rd/sqliteo")!
+            )
+            .font(.body)
+            .foregroundColor(.blue)
+            
+            Text("MacOS 13 version by Alessio Palma")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            
+            Text("SVG icon by Shiraz Jamal")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+
         }
         .padding(40)
         .frame(width: 400)

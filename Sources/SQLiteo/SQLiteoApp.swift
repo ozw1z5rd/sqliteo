@@ -1,6 +1,39 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum ColorSchemeOption: String, CaseIterable, Identifiable {
+    case system = "System"
+    case light = "Light"
+    case dark = "Dark"
+
+    var id: String { rawValue }
+
+    var preferredScheme: ColorScheme? {
+        switch self {
+        case .dark: return .dark
+        case .light: return .light
+        case .system: return nil
+        }
+    }
+}
+
+struct SettingsView: View {
+    @AppStorage("colorScheme") private var colorScheme: ColorSchemeOption = .system
+
+    var body: some View {
+        Form {
+            Picker("Appearance", selection: $colorScheme) {
+                ForEach(ColorSchemeOption.allCases) { option in
+                    Text(option.rawValue).tag(option)
+                }
+            }
+            .pickerStyle(.radioGroup)
+        }
+        .padding(20)
+        .frame(width: 300, height: 150)
+    }
+}
+
 @main
 @MainActor
 struct SQLiteoApp: App {
@@ -8,6 +41,7 @@ struct SQLiteoApp: App {
     @FocusedValue(\.databaseManager) var dbManager
     @FocusedValue(\.queryStore) var queryStore
     @StateObject private var recentFiles = RecentFilesManager.shared
+    @AppStorage("colorScheme") private var colorScheme: ColorSchemeOption = .system
 
     init() {
     }
@@ -15,6 +49,7 @@ struct SQLiteoApp: App {
     var body: some Scene {
         WindowGroup(id: "main") {
             RootView()
+                .preferredColorScheme(colorScheme.preferredScheme)
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
@@ -64,16 +99,7 @@ struct SQLiteoApp: App {
 
             CommandGroup(replacing: .appInfo) {
                 Button("About SQLiteo") {
-                    let aboutWindow = NSWindow(
-                        contentRect: NSRect(x: 0, y: 0, width: 400, height: 500),
-                        styleMask: [.titled, .closable],
-                        backing: .buffered,
-                        defer: false
-                    )
-                    aboutWindow.title = "About SQLiteo"
-                    aboutWindow.contentView = NSHostingView(rootView: AboutView())
-                    aboutWindow.center()
-                    aboutWindow.makeKeyAndOrderFront(nil)
+                    AboutWindowManager.shared.show()
                 }
             }
 
@@ -85,6 +111,59 @@ struct SQLiteoApp: App {
                 }
             }
         }
+
+        Settings {
+            SettingsView()
+        }
+    }
+}
+
+/// Ensures the about window reference is cleared when the window is closed.
+@MainActor
+private final class AboutWindowDelegate: NSObject, NSWindowDelegate {
+    let onClose: () -> Void
+
+    init(onClose: @escaping () -> Void) {
+        self.onClose = onClose
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        onClose()
+    }
+}
+
+/// Manages a single about window instance so it doesn't get deallocated while open.
+@MainActor
+private final class AboutWindowManager: NSObject {
+    static let shared = AboutWindowManager()
+    private var window: NSWindow?
+    private var delegate: AboutWindowDelegate?
+
+    func show() {
+        if let window {
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        let aboutWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 500),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        aboutWindow.title = "About SQLiteo"
+        aboutWindow.contentView = NSHostingView(rootView: AboutView())
+        aboutWindow.center()
+        aboutWindow.isReleasedWhenClosed = false
+
+        let del = AboutWindowDelegate { [weak self] in
+            self?.window = nil
+            self?.delegate = nil
+        }
+        aboutWindow.delegate = del
+        delegate = del
+        window = aboutWindow
+        aboutWindow.makeKeyAndOrderFront(nil)
     }
 }
 
