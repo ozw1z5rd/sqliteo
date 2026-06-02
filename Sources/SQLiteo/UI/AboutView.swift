@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct AboutView: View {
-    let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
-    let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+    let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "local development"
+    let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "beta"
 
     var body: some View {
         VStack(spacing: 20) {
@@ -19,10 +19,13 @@ struct AboutView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Text("A native SQLite browser for macOS built with Swift.")
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-                .padding(.horizontal)
+            VStack(spacing: 4) {
+                Text("A native MacOS SQLite browser")
+                    .multilineTextAlignment(.center)
+                Text("built with Swift.")
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.horizontal)
             
             Divider()
 

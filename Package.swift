@@ -21,7 +21,7 @@ let package = Package(
                 .product(name: "CodeEditorView", package: "CodeEditorView"),
                 .product(name: "LanguageSupport", package: "CodeEditorView"),
             ],
-            exclude: ["Info.plist"],
+            exclude: [],
             resources: [
                 .process("Assets.xcassets"),
                 .process("Resources")
